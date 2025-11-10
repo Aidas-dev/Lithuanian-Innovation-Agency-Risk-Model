@@ -1,53 +1,55 @@
-import pandas as pd
 import os
-import re
+import pandas as pd
+import logging
 
-def load_financial_data(balance_path, pnl_path):
+
+def save_df_list_to_csv_auto(df_list, directory_path, df_dict=None):
     """
-    Load balance sheet and PnL data from Excel files into pandas DataFrames organized by year.
-    
-    Args:
-        balance_path (str): Path to directory containing balance sheet Excel files
-        pnl_path (str): Path to directory containing PnL Excel files
-    
-    Returns:
-        dict: Dictionary where keys are years and values are tuples of (balance_df, pnl_df)
-    
-    Raises:
-        FileNotFoundError: If either directory doesn't exist
-        ValueError: If files don't follow expected naming pattern
+    Save DataFrame list with automatic variable name detection.
+
+    Parameters:
+    -----------
+    df_list : list of pandas.DataFrame
+        List of DataFrames to save
+    directory_path : str
+        Path to directory where files will be saved
+    df_dict : dict, optional
+        Dictionary mapping DataFrames to variable names for automatic detection
     """
-    # Initialize output dictionary
-    financial_data = {}
-    
-    # Compile regex pattern to extract year from filename
-    year_pattern = re.compile(r'.*_(\d{4})\.xlsx$')
-    
-    # Process balance sheets
-    balance_files = {}
-    for file in os.listdir(balance_path):
-        match = year_pattern.match(file)
-        if match:
-            year = match.group(1)
-            balance_files[year] = os.path.join(balance_path, file)
-    
-    # Process PnL statements
-    pnl_files = {}
-    for file in os.listdir(pnl_path):
-        match = year_pattern.match(file)
-        if match:
-            year = match.group(1)
-            pnl_files[year] = os.path.join(pnl_path, file)
-    
-    # Verify we have matching files for each year
-    common_years = set(balance_files.keys()) & set(pnl_files.keys())
-    if not common_years:
-        raise ValueError("No matching year files found between balance and PnL directories")
-    
-    # Load data for each year
-    for year in common_years:
-        balance_df = pd.read_excel(balance_files[year])
-        pnl_df = pd.read_excel(pnl_files[year])
-        financial_data[year] = (balance_df, pnl_df)
-    
-    return financial_data
+    import inspect
+    import os
+
+    # Create directory if it doesn't exist
+    os.makedirs(directory_path, exist_ok=True)
+
+    # Try to automatically detect variable names
+    variable_names = []
+
+    if df_dict is not None:
+        # Use provided dictionary to map DataFrames to names
+        for df in df_list:
+            for name, obj in df_dict.items():
+                if obj is df:
+                    variable_names.append(name)
+                    break
+            else:
+                variable_names.append(f'dataframe_{len(variable_names)}')
+    else:
+        # Try to find variable names in calling scope
+        try:
+            frame = inspect.currentframe().f_back
+            local_vars = frame.f_locals
+
+            for df in df_list:
+                found_name = None
+                for var_name, var_val in local_vars.items():
+                    if var_val is df and isinstance(df, pd.DataFrame):
+                        found_name = var_name
+                        break
+                variable_names.append(found_name or f'dataframe_{len(variable_names)}')
+        except:
+            # Fallback to default names
+            variable_names = [f'dataframe_{i}' for i in range(len(df_list))]
+
+    return save_df_list_to_csv(df_list, directory_path, variable_names)
+
