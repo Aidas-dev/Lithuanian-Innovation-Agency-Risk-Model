@@ -212,10 +212,10 @@ def remove_columns(df_list: List[pd.DataFrame],
 
     Parameters:
     -----------
-    df_list : List of DataFrames to process
-    columns_to_remove : List of column names to remove
-    verbose : Whether to show what's happening
-    inplace : If False, returns new DataFrames (recommended)
+    :param df_list : List of DataFrames to process
+    :param columns_to_remove : List of column names to remove
+    :param verbose : Whether to show what's happening
+    :param inplace : If False, returns new DataFrames (recommended)
 
     Returns:
     --------
