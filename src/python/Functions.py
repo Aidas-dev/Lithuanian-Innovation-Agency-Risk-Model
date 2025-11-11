@@ -1,7 +1,7 @@
 import os
 import pandas as pd
 import logging
-
+import inspect
 
 def save_df_list_to_csv_auto(df_list, directory_path, df_dict=None):
     """
@@ -16,9 +16,6 @@ def save_df_list_to_csv_auto(df_list, directory_path, df_dict=None):
     df_dict : dict, optional
         Dictionary mapping DataFrames to variable names for automatic detection
     """
-    import inspect
-    import os
-
     # Create directory if it doesn't exist
     os.makedirs(directory_path, exist_ok=True)
 
@@ -51,5 +48,10 @@ def save_df_list_to_csv_auto(df_list, directory_path, df_dict=None):
             # Fallback to default names
             variable_names = [f'dataframe_{i}' for i in range(len(df_list))]
 
-    return save_df_list_to_csv(df_list, directory_path, variable_names)
+    # Save each DataFrame to a CSV file
+    for i, df in enumerate(df_list):
+        file_path = os.path.join(directory_path, f'{variable_names[i]}.csv')
+        df.to_csv(file_path, index=False)
+        logging.info(f'Saved DataFrame to {file_path}')
 
+    return variable_names
