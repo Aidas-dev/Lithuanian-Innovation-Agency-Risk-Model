@@ -4,31 +4,38 @@ A data science project for risk modeling using Python and R.
 
 ## Project Structure
 
-```
+```text
 ├── data/
-│   ├── raw/               # Raw input data (Excel files)
-│   ├── processed/         # Cleaned and processed data
-│   └── interim/           # Intermediate data files
+│   ├── raw/                   # Raw input data (CSV, Excel, JSON)
+│   │   ├── firm-adress-data/  
+│   │   ├── firm-balance-statements/
+│   │   ├── firm-employment-data/ 
+│   │   ├── firm-PnL-statements/
+│   │   └── firm-registration-dates/
+│   │
+│   ├── interim/               # Intermediate processed data
+│   │   └── joined-balance-and-PnL/
+│   │
+│   └── processed/             # Final processed datasets
 │
 ├── notebooks/
-│   ├── exploration/       # Exploratory Data Analysis (EDA)
-│   ├── preprocessing/     # Data cleaning and preparation
-│   ├── modeling/          # Model development notebooks
-│   └── visualization/     # Data visualization notebooks
+│   ├── preprocessing/         # Data cleaning notebooks
+│   └── exploration/           # Exploratory analysis notebooks
 │
 ├── src/
-│   ├── python/            # Python source code
-│   └── r/                 # R source code
+│   └── python/                # Python source code (e.g., Functions.py)
 │
-├── docs/                  # Project documentation
+├── docs/                      # Project documentation
+│   └── input-data-documentation/
 │
-├── requirements/
-│   ├── python.txt         # Python requirements
-│   └── r.txt             # R requirements
+├── requirements/              # Dependency files
+│   ├── python.txt             
+│   └── r.txt                 
 │
-├── config/                # Configuration files
+├── config/                    # Configuration files
+│   └── config.ini
 │
-└── README.md              # Project overview
+└── README.md                  # Project overview
 ```
 
 ## Setup Instructions
@@ -82,9 +89,7 @@ A data science project for risk modeling using Python and R.
    ```
 4. Run notebooks from the notebooks/ directory
 
-   ---------
-
-# Pycharm/DataSpell Specific Setup
+## Pycharm/DataSpell Specific Setup
 
 You can use Pycharm or DataSpell to run the notebooks. Here are the steps to set up Pycharm/DataSpell.
 
@@ -102,6 +107,7 @@ Pycharm/DataSpell do not support mamba environments. We use a workaround.
 8. Accept all window prompts.
 9. For R interpreter the process is the same,
 10. Navigate to miniforge3/envs/risk-model/bin/R and select it.
+
 ### If you used conda:
 
 Conda is supported by Pycharm/DataSpell.
@@ -113,3 +119,6 @@ Conda is supported by Pycharm/DataSpell.
 5. Click on the "+" sign and select "Conda Environment"
 6. Select the "risk-model-env" environment
 
+---
+
+**Note:** The project uses Git LFS for large data files. Ensure you have Git LFS installed before cloning.
