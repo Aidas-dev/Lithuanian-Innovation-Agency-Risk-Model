@@ -82,4 +82,32 @@ A data science project for risk modeling using Python and R.
    ```
 4. Run notebooks from the notebooks/ directory
 
-# Pycharm/DataSpell Setup
+# Pycharm/DataSpell Specific Setup
+
+You can use Pycharm or DataSpell to run the notebooks. Here are the steps to set up Pycharm/DataSpell.
+
+### If you used mamba:
+
+Pycharm/DataSpell do not support mamba environments. We use a workaround.
+
+1. Open Pycharm/DataSpell
+2. Click on "Open" and select the risk-model directory
+3. Click on "File" and then "Settings"
+4. Click on "Project Interpreter"
+5. Click on the "+" sign and select local Python.
+6. Choose folder select.
+7. Navigate to miniforge3/envs/risk-model/bin/python3.14 and select it.
+8. Accept all window prompts.
+9. For R interpreter the process is the same,
+10. Navigate to miniforge3/envs/risk-model/bin/R and select it.
+### If you used conda:
+
+Conda is supported by Pycharm/DataSpell.
+
+1. Open Pycharm/DataSpell
+2. Click on "Open" and select the risk-model directory
+3. Click on "File" and then "Settings"
+4. Click on "Project Interpreter"
+5. Click on the "+" sign and select "Conda Environment"
+6. Select the "risk-model-env" environment
+

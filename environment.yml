@@ -1,7 +1,6 @@
 name: risk-model-env
 channels:
   - conda-forge
-  - defaults
 dependencies:
   # Python packages
   - pip>=21.0.0
