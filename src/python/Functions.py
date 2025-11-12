@@ -167,9 +167,27 @@ def detailed_duplicate_analysis(df_list: List[pd.DataFrame],
                                 list_names: List[str] = None,
                                 ja_kodas_column: str = 'ja_kodas') -> Dict[str, pd.DataFrame]:
     """
-    Perform detailed duplicate analysis for ja_kodas column across DataFrames.
+    Perform detailed duplicate analysis for ja_kodas column across multiple DataFrames.
 
-    Returns a dictionary with detailed duplicate information for each DataFrame.
+    Parameters:
+    -----------
+    :param df_list: List of DataFrames to analyze for duplicates
+    :type df_list: List[pd.DataFrame]
+    
+    :param list_names: Optional list of names for each DataFrame (default: df_0, df_1, etc.)
+    :type list_names: List[str]
+    
+    :param ja_kodas_column: Name of the column containing ja_kodas identifiers (default: 'ja_kodas')
+    :type ja_kodas_column: str
+
+    Returns:
+    --------
+    Dict[str, pd.DataFrame]
+        Dictionary where keys are DataFrame names and values contain:
+        - 'duplicate_rows': DataFrame with all duplicate rows
+        - 'duplicate_value_counts': Series with counts of duplicate values
+        - 'total_duplicate_values': Total number of duplicate values
+        - 'max_duplication': Maximum number of duplicates for any single value
     """
     if list_names is None:
         list_names = [f'df_{i}' for i in range(len(df_list))]
@@ -260,15 +278,29 @@ def remove_columns(df_list: List[pd.DataFrame],
 import pandas as pd
 
 
-def set_columns_to_datetime(data, datetime_columns, drop_columns=None):
+def set_columns_to_datetime(data: Union[pd.DataFrame, List[pd.DataFrame]],
+                           datetime_columns: Union[str, List[str]],
+                           drop_columns: Union[str, List[str]] = None) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
-    Convert specified columns in a DataFrame or a list of DataFrames to datetime format
-    and drop specified columns if provided.
+    Convert specified columns to datetime format in DataFrame(s) and optionally drop columns.
 
-    :param data: A DataFrame or a list of DataFrames
-    :param datetime_columns: Column name or list of column names to convert to datetime
-    :param drop_columns: Column name or list of column names to drop, default is None
-    :return: Processed DataFrame or list of DataFrames
+    Parameters:
+    -----------
+    :param data: Input DataFrame or list of DataFrames to process
+    :type data: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param datetime_columns: Column name(s) to convert to datetime format
+    :type datetime_columns: Union[str, List[str]]
+    
+    :param drop_columns: Optional column name(s) to drop after conversion (default: None)
+    :type drop_columns: Union[str, List[str]]
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Processed DataFrame(s) with:
+        - Specified columns converted to datetime format
+        - Optional columns dropped if drop_columns was provided
     """
     if isinstance(data, pd.DataFrame):
         # If data is a single DataFrame
@@ -290,14 +322,30 @@ def set_columns_to_datetime(data, datetime_columns, drop_columns=None):
     else:
         raise ValueError("data must be a DataFrame or a list of DataFrames")
 
-def rename_columns_if_exist(data, current_columns, new_columns):
-    """
-    Rename columns in a DataFrame or a list of DataFrames if they exist.
 
-    :param data: A DataFrame or a list of DataFrames
-    :param current_columns: Current column name or list of column names to rename
-    :param new_columns: New column name or list of new column names
-    :return: Processed DataFrame or list of DataFrames
+def rename_columns_if_exist(data: Union[pd.DataFrame, List[pd.DataFrame]],
+                           current_columns: Union[str, List[str]],
+                           new_columns: Union[str, List[str]]) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Rename columns in DataFrame(s) if they exist, preserving original data otherwise.
+
+    Parameters:
+    -----------
+    :param data: Input DataFrame or list of DataFrames to process
+    :type data: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param current_columns: Current column name(s) to be renamed
+    :type current_columns: Union[str, List[str]]
+    
+    :param new_columns: New column name(s) to use
+    :type new_columns: Union[str, List[str]]
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Processed DataFrame(s) with:
+        - Columns renamed if they existed in the original data
+        - Original columns preserved if they didn't exist
     """
     if isinstance(current_columns, str):
         current_columns = [current_columns]
@@ -324,3 +372,370 @@ def rename_columns_if_exist(data, current_columns, new_columns):
         return processed_data
     else:
         raise ValueError("data must be a DataFrame or a list of DataFrames")
+
+### Column extractor
+def extract_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                    columns: Union[str, List[str]],
+                    remove_from_original: bool = False,
+                    inplace: bool = False) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Extract specific columns from DataFrame(s), optionally removing them from original.
+
+    Parameters:
+    -----------
+    :param dataframes: Input DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param columns: Column name(s) to extract
+    :type columns: Union[str, List[str]]
+    
+    :param remove_from_original: Whether to remove extracted columns from original (default: False)
+    :type remove_from_original: bool
+    
+    :param inplace: Whether to modify original DataFrame(s) when remove_from_original is True (default: False)
+    :type inplace: bool
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Extracted DataFrame(s) containing only the specified columns.
+        If remove_from_original is True and inplace is False, returns both:
+        - Extracted DataFrame(s) with only the specified columns
+        - Original DataFrame(s) with columns removed (as copies)
+    """
+    # Convert single DataFrame to list for uniform processing
+    single_df = False
+    if isinstance(dataframes, pd.DataFrame):
+        dataframes = [dataframes]
+        single_df = True
+
+    # Convert single column to list
+    if isinstance(columns, str):
+        columns = [columns]
+
+    extracted_dfs = []
+    processed_dfs = []
+
+    for i, df in enumerate(dataframes):
+        try:
+            # Check if all requested columns exist
+            missing_columns = [col for col in columns if col not in df.columns]
+            if missing_columns:
+                print(f"DataFrame {i}: Missing columns {missing_columns}. Available: {list(df.columns)}")
+                # Extract only available columns
+                available_columns = [col for col in columns if col in df.columns]
+                if not available_columns:
+                    print(f"DataFrame {i}: No requested columns available, returning empty DataFrame")
+                    extracted_df = pd.DataFrame()
+                    processed_df = df.copy() if not inplace else df
+                else:
+                    # Extract available columns
+                    extracted_df = df[available_columns].copy()
+                    if remove_from_original:
+                        if inplace:
+                            df.drop(columns=available_columns, inplace=True)
+                            processed_df = df
+                        else:
+                            processed_df = df.drop(columns=available_columns)
+                    else:
+                        processed_df = df.copy()
+            else:
+                # All columns available - extract them
+                extracted_df = df[columns].copy()
+
+                if remove_from_original:
+                    if inplace:
+                        df.drop(columns=columns, inplace=True)
+                        processed_df = df
+                    else:
+                        processed_df = df.drop(columns=columns)
+                else:
+                    processed_df = df.copy()
+
+            extracted_dfs.append(extracted_df)
+            processed_dfs.append(processed_df)
+
+            print(f"DataFrame {i}: Extracted {len(extracted_df.columns)} columns, "
+                  f"processed shape: {processed_df.shape}")
+
+        except Exception as e:
+            print(f"DataFrame {i}: Error extracting columns - {e}")
+            # Return original DataFrame if error occurs
+            extracted_dfs.append(pd.DataFrame())
+            processed_dfs.append(df.copy() if not inplace else df)
+
+    # Update original dataframes if inplace is True and remove_from_original is True
+    if remove_from_original and inplace and not single_df:
+        for i, processed_df in enumerate(processed_dfs):
+            dataframes[i] = processed_df
+
+    # Return single DataFrame if input was single DataFrame
+    if single_df:
+        if remove_from_original and inplace:
+            # Original DataFrame was modified inplace, return extracted DataFrame only
+            return extracted_dfs[0]
+        else:
+            # Return both extracted and processed (if remove_from_original)
+            return extracted_dfs[0]
+    else:
+        if remove_from_original and inplace:
+            # Original list was modified inplace, return extracted list only
+            return extracted_dfs
+        else:
+            return extracted_dfs
+
+
+import pandas as pd
+from typing import Union, List, Tuple, Callable
+import numpy as np
+
+### Column merger
+
+def merge_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                  columns: Union[List[str], Tuple[str, str], str],
+                  new_column_name: str = None,
+                  merge_type: str = 'concat',
+                  separator: str = ' ',
+                  conflict_resolution: str = 'coalesce',
+                  custom_function: Callable = None) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Merge multiple columns in DataFrame(s) using various merge strategies.
+
+    :param dataframes: Single DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+
+    :param columns: Column names to merge. Can be:
+                   - List of column names ['col1', 'col2', ...]
+                   - Tuple of two column names ('col1', 'col2')
+                   - Single string for multiple columns with same prefix 'col_prefix'
+    :type columns: Union[List[str], Tuple[str, str], str]
+
+    :param new_column_name: Name for the merged column. If None, uses first column name
+    :type new_column_name: str, optional
+
+    :param merge_type: Type of merge operation. Options:
+                      - 'concat': Concatenate string values with separator
+                      - 'coalesce': Take first non-null value
+                      - 'sum': Sum numeric values
+                      - 'mean': Average numeric values
+                      - 'min': Minimum value
+                      - 'max': Maximum value
+                      - 'custom': Use custom_function
+    :type merge_type: str
+
+    :param separator: Separator for concatenation (used with merge_type='concat')
+    :type separator: str
+
+    :param conflict_resolution: How to handle conflicts when merge_type='coalesce'. Options:
+                               - 'coalesce': Take first non-null
+                               - 'keep_both': Keep both values in list
+                               - 'error': Raise error on conflict
+    :type conflict_resolution: str
+
+    :param custom_function: Custom function for merging (used with merge_type='custom')
+    :type custom_function: Callable, optional
+
+    :return: DataFrame(s) with merged columns
+    :rtype: Union[pd.DataFrame, List[pd.DataFrame]]
+    """
+    # Convert single DataFrame to list for uniform processing
+    single_df = False
+    if isinstance(dataframes, pd.DataFrame):
+        dataframes = [dataframes]
+        single_df = True
+
+    # Process columns parameter
+    if isinstance(columns, str):
+        # Single string - treat as prefix or exact column name
+        column_list = [col for col in dataframes[0].columns if col.startswith(columns)] if len(dataframes) > 0 else []
+        if not column_list:
+            column_list = [columns]
+    elif isinstance(columns, (tuple, list)) and len(columns) == 2:
+        # Two columns specified
+        column_list = list(columns)
+    else:
+        # List of columns
+        column_list = list(columns)
+
+    if len(column_list) < 2:
+        raise ValueError(f"At least 2 columns required for merging. Got: {column_list}")
+
+    # Set default new column name
+    if new_column_name is None:
+        new_column_name = f"merged_{column_list[0]}"
+
+    processed_dfs = []
+
+    for i, df in enumerate(dataframes):
+        try:
+            df_working = df.copy()
+
+            # Check if all columns exist
+            missing_columns = [col for col in column_list if col not in df_working.columns]
+            if missing_columns:
+                print(f"DataFrame {i}: Missing columns {missing_columns}. Available: {list(df_working.columns)}")
+                # Use only available columns
+                available_columns = [col for col in column_list if col in df_working.columns]
+                if len(available_columns) < 2:
+                    print(f"DataFrame {i}: Not enough columns to merge, skipping")
+                    processed_dfs.append(df_working)
+                    continue
+                column_list = available_columns
+
+            print(f"DataFrame {i}: Merging columns {column_list} using '{merge_type}' strategy")
+
+            # Perform merge based on type
+            if merge_type == 'concat':
+                # String concatenation
+                merged_values = df_working[column_list[0]].astype(str)
+                for col in column_list[1:]:
+                    merged_values = merged_values + separator + df_working[col].astype(str)
+                df_working[new_column_name] = merged_values
+
+            elif merge_type == 'coalesce':
+                # Take first non-null value
+                if conflict_resolution == 'coalesce':
+                    df_working[new_column_name] = df_working[column_list[0]]
+                    for col in column_list[1:]:
+                        mask = df_working[new_column_name].isna()
+                        df_working.loc[mask, new_column_name] = df_working.loc[mask, col]
+
+                elif conflict_resolution == 'keep_both':
+                    # Keep both values as a list
+                    def combine_values(row):
+                        values = [row[col] for col in column_list if pd.notna(row[col])]
+                        return values if values else np.nan
+
+                    df_working[new_column_name] = df_working.apply(combine_values, axis=1)
+
+                elif conflict_resolution == 'error':
+                    # Check for conflicts
+                    for idx, row in df_working.iterrows():
+                        non_null_values = [row[col] for col in column_list if pd.notna(row[col])]
+                        if len(non_null_values) > 1 and len(set(non_null_values)) > 1:
+                            raise ValueError(f"Conflict in row {idx}: {non_null_values}")
+                    df_working[new_column_name] = df_working[column_list[0]].combine_first(df_working[column_list[1]])
+
+            elif merge_type in ['sum', 'mean', 'min', 'max']:
+                # Numeric operations
+                numeric_cols = [col for col in column_list if pd.api.types.is_numeric_dtype(df_working[col])]
+                if len(numeric_cols) < len(column_list):
+                    print(f"DataFrame {i}: Some columns are not numeric: {set(column_list) - set(numeric_cols)}")
+
+                if merge_type == 'sum':
+                    df_working[new_column_name] = df_working[numeric_cols].sum(axis=1, skipna=True)
+                elif merge_type == 'mean':
+                    df_working[new_column_name] = df_working[numeric_cols].mean(axis=1, skipna=True)
+                elif merge_type == 'min':
+                    df_working[new_column_name] = df_working[numeric_cols].min(axis=1, skipna=True)
+                elif merge_type == 'max':
+                    df_working[new_column_name] = df_working[numeric_cols].max(axis=1, skipna=True)
+
+            elif merge_type == 'custom' and custom_function:
+                # Custom merge function
+                df_working[new_column_name] = df_working[column_list].apply(custom_function, axis=1)
+
+            else:
+                raise ValueError(f"Unsupported merge_type: {merge_type}")
+
+            # Remove original columns if desired (optional - you can add this parameter)
+            # if remove_original:
+            #     df_working = df_working.drop(columns=column_list)
+
+            processed_dfs.append(df_working)
+            print(f"DataFrame {i}: Successfully created '{new_column_name}'")
+
+        except Exception as e:
+            print(f"DataFrame {i}: Error merging columns - {e}")
+            processed_dfs.append(df)
+
+    # Return single DataFrame if input was single
+    return processed_dfs[0] if single_df else processed_dfs
+
+
+# Specialized functions for common merge operations
+
+def concatenate_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                        columns: Union[List[str], Tuple[str, str]],
+                        new_column_name: str = None,
+                        separator: str = ' ') -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Concatenate multiple columns into a single string column.
+
+    Parameters:
+    -----------
+    :param dataframes: Input DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param columns: Column name(s) to concatenate
+    :type columns: Union[List[str], Tuple[str, str]]
+    
+    :param new_column_name: Name for the concatenated column (default: None)
+    :type new_column_name: str
+    
+    :param separator: String separator to use between values (default: ' ')
+    :type separator: str
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Processed DataFrame(s) with:
+        - New column containing concatenated values from input columns
+    """
+    return merge_columns(dataframes, columns, new_column_name, 'concat', separator)
+
+
+def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                     columns: Union[List[str], Tuple[str, str]],
+                     new_column_name: str = None,
+                     conflict_resolution: str = 'coalesce') -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Coalesce multiple columns - take first non-null value.
+
+    Parameters:
+    -----------
+    :param dataframes: Input DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param columns: Column name(s) to coalesce
+    :type columns: Union[List[str], Tuple[str, str]]
+    
+    :param new_column_name: Name for the coalesced column (default: None)
+    :type new_column_name: str
+    
+    :param conflict_resolution: How to handle conflicts (default: 'coalesce')
+    :type conflict_resolution: str
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Processed DataFrame(s) with:
+        - New column containing first non-null values from input columns
+    """
+    return merge_columns(dataframes, columns, new_column_name, 'coalesce', conflict_resolution=conflict_resolution)
+
+
+def sum_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                columns: Union[List[str], Tuple[str, str]],
+                new_column_name: str = None) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Sum values from numeric columns.
+
+    Parameters:
+    -----------
+    :param dataframes: Input DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+    
+    :param columns: Numeric column name(s) to sum
+    :type columns: Union[List[str], Tuple[str, str]]
+    
+    :param new_column_name: Name for the summed column (default: None)
+    :type new_column_name: str
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Processed DataFrame(s) with:
+        - New column containing sum of values from input columns
+    """
+    return merge_columns(dataframes, columns, new_column_name, 'sum')
