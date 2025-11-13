@@ -121,4 +121,10 @@ Conda is supported by Pycharm/DataSpell.
 
 ---
 
-**Note:** The project uses Git LFS for large data files. Ensure you have Git LFS installed before cloning.
+**Note:** The project uses Git LFS for large data files, mamba/conda download Git-LFS to the risk-model environment. <br>
+Before reading the large raw files you will need to pull the files using, or adding a script function in notebook before importing.
+In base repository folder run:
+   ```bash
+   git-lfs pull
+   ```
+
