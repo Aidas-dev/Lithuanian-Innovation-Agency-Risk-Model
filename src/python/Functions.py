@@ -1841,8 +1841,8 @@ def sum_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
 
 def filter_rows_by_value(
         data: Union[pd.DataFrame, List[pd.DataFrame]],
-        column: Union[str, List[str]],
-        value: Union[Any, List[Any], Tuple[Any, Any]],
+        column: Union[str, List[str], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]]],
+        value: Union[Any, List[Any], Tuple[Any, Any], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]]] = None,
         verbose: bool = True,
         inplace: bool = False
 ) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
@@ -1854,14 +1854,17 @@ def filter_rows_by_value(
     :param data: Input DataFrame or list of DataFrames to filter
     :type data: Union[pd.DataFrame, List[pd.DataFrame]]
 
-    :param column: Column name or list of column names to filter on
-    :type column: Union[str, List[str]]
+    :param column: Column name or list of column names to filter on, or a dictionary for advanced filtering
+                  If using dictionary format, the value parameter should be None
+    :type column: Union[str, List[str], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]]]
 
     :param value: Value(s) to match in the column(s). Can be:
-                 - Single value
-                 - List of values (matches any in list)
-                 - Tuple of two values (matches values between them, inclusive)
-    :type value: Union[Any, List[Any], Tuple[Any, Any]]
+                 - Single value (applied to all columns)
+                 - List of values (matches any in list, applied to all columns)
+                 - Tuple of two values (matches values between them, inclusive, applied to all columns)
+                 - Dictionary mapping column names to their respective filter values/ranges
+                 - None (when using dictionary format for column parameter)
+    :type value: Union[Any, List[Any], Tuple[Any, Any], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]], None]
 
     :param verbose: Whether to print progress messages (default: True)
     :type verbose: bool
@@ -1875,26 +1878,149 @@ def filter_rows_by_value(
         - If inplace=False: New filtered DataFrame(s)
         - If inplace=True: None (original DataFrame(s) are modified in place)
     """
+
+    def parse_filter_conditions(column_input, value_input):
+        """
+        Parse filter conditions into a standardized dictionary format.
+
+        Returns:
+        --------
+        Dict[str, Dict[str, Any]]: Dictionary with column names as keys and filter info as values
+        """
+        conditions = {}
+
+        # Case 1: Dictionary format for advanced filtering
+        if isinstance(column_input, dict):
+            for col, val in column_input.items():
+                if isinstance(val, (tuple, list)) and len(val) == 2:
+                    # Range filter
+                    range_min, range_max = sorted(val)
+                    conditions[col] = {
+                        'type': 'range',
+                        'min': range_min,
+                        'max': range_max,
+                        'values': None
+                    }
+                elif isinstance(val, (list, tuple)):
+                    # Multiple values filter
+                    conditions[col] = {
+                        'type': 'values',
+                        'min': None,
+                        'max': None,
+                        'values': list(val)
+                    }
+                else:
+                    # Single value filter
+                    conditions[col] = {
+                        'type': 'values',
+                        'min': None,
+                        'max': None,
+                        'values': [val]
+                    }
+            return conditions
+
+        # Case 2: Column(s) with separate value parameter
+        columns = [column_input] if isinstance(column_input, str) else list(column_input)
+
+        if isinstance(value_input, dict):
+            # Value is a dictionary mapping columns to their filters
+            for col in columns:
+                if col in value_input:
+                    val = value_input[col]
+                    if isinstance(val, (tuple, list)) and len(val) == 2:
+                        range_min, range_max = sorted(val)
+                        conditions[col] = {
+                            'type': 'range',
+                            'min': range_min,
+                            'max': range_max,
+                            'values': None
+                        }
+                    elif isinstance(val, (list, tuple)):
+                        conditions[col] = {
+                            'type': 'values',
+                            'min': None,
+                            'max': None,
+                            'values': list(val)
+                        }
+                    else:
+                        conditions[col] = {
+                            'type': 'values',
+                            'min': None,
+                            'max': None,
+                            'values': [val]
+                        }
+                else:
+                    raise ValueError(f"Column '{col}' not found in value dictionary")
+        else:
+            # Same value/range applied to all columns
+            if isinstance(value_input, (tuple, list)) and len(value_input) == 2:
+                # Range filter for all columns
+                range_min, range_max = sorted(value_input)
+                for col in columns:
+                    conditions[col] = {
+                        'type': 'range',
+                        'min': range_min,
+                        'max': range_max,
+                        'values': None
+                    }
+            elif isinstance(value_input, (list, tuple)):
+                # Multiple values for all columns
+                for col in columns:
+                    conditions[col] = {
+                        'type': 'values',
+                        'min': None,
+                        'max': None,
+                        'values': list(value_input)
+                    }
+            else:
+                # Single value for all columns
+                for col in columns:
+                    conditions[col] = {
+                        'type': 'values',
+                        'min': None,
+                        'max': None,
+                        'values': [value_input]
+                    }
+
+        return conditions
+
+    def create_filter_mask(df, conditions):
+        """Create a filter mask based on the conditions dictionary"""
+        mask = pd.Series(True, index=df.index)
+
+        for col, condition in conditions.items():
+            if col not in df.columns:
+                if verbose:
+                    print(f"Warning: Column '{col}' not found in DataFrame - skipping")
+                continue
+
+            if condition['type'] == 'range':
+                mask &= df[col].between(condition['min'], condition['max'], inclusive='both')
+            elif condition['type'] == 'values':
+                mask &= df[col].isin(condition['values'])
+
+        return mask
+
     # Convert single DataFrame to list for uniform processing
     single_df = False
     if isinstance(data, pd.DataFrame):
         data = [data]
         single_df = True
 
-    # Convert single column to list
-    if isinstance(column, str):
-        columns = [column]
-    else:
-        columns = list(column)
-
-    # Determine filter type (exact match or range)
-    is_range = isinstance(value, (tuple, list)) and len(value) == 2
-    if is_range:
-        range_min, range_max = sorted(value)
-    elif not isinstance(value, (list, tuple)):
-        values = [value]
-    else:
-        values = list(value)
+    # Parse filter conditions
+    try:
+        conditions = parse_filter_conditions(column, value)
+        if verbose:
+            print("🔍 Filter Conditions:")
+            for col, condition in conditions.items():
+                if condition['type'] == 'range':
+                    print(f"   - {col}: between {condition['min']} and {condition['max']}")
+                else:
+                    print(f"   - {col}: in {condition['values']}")
+    except Exception as e:
+        if verbose:
+            print(f"Error parsing filter conditions: {e}")
+        return data[0] if single_df else data
 
     # Handle inplace operation
     if inplace:
@@ -1907,20 +2033,8 @@ def filter_rows_by_value(
             try:
                 original_rows = len(df)
 
-                # Check if all specified columns exist
-                missing_cols = [col for col in columns if col not in df.columns]
-                if missing_cols:
-                    if verbose:
-                        print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
-                    continue
-
-                # Create filter mask based on filter type
-                mask = pd.Series(True, index=df.index)
-                for col in columns:
-                    if is_range:
-                        mask &= df[col].between(range_min, range_max, inclusive='both')
-                    else:
-                        mask &= df[col].isin(values)
+                # Create filter mask
+                mask = create_filter_mask(df, conditions)
 
                 # Apply filter INPLACE by dropping rows that don't match
                 rows_before = len(df)
@@ -1932,11 +2046,6 @@ def filter_rows_by_value(
                 if verbose:
                     print(f"DataFrame {i}: Modified INPLACE. Original rows: {original_rows}, "
                           f"Current rows: {len(df)}, Removed: {rows_removed}")
-                    if rows_removed > 0:
-                        if is_range:
-                            print(f"   - Kept rows where {columns} are between {range_min} and {range_max}")
-                        else:
-                            print(f"   - Kept rows where {columns} contain {values}")
 
             except Exception as e:
                 if verbose:
@@ -1946,15 +2055,11 @@ def filter_rows_by_value(
         if verbose:
             print(f"\n🎯 FILTERING SUMMARY (INPLACE):")
             print(f"   📊 Total rows removed across all DataFrames: {total_rows_removed}")
-            if is_range:
-                print(f"   🔍 Filter criteria: Columns {columns} between {range_min} and {range_max}")
-            else:
-                print(f"   🔍 Filter criteria: Columns {columns} matching values {values}")
 
         return None  # Inplace operations return None
 
     else:
-        # ORIGINAL BEHAVIOR (create new objects)
+        # NEW OBJECT MODE
         if verbose:
             print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
 
@@ -1964,38 +2069,19 @@ def filter_rows_by_value(
         for i, df in enumerate(data):
             try:
                 original_rows = len(df)
-                filtered_df = df.copy()
 
-                # Check if all specified columns exist
-                missing_cols = [col for col in columns if col not in df.columns]
-                if missing_cols:
-                    if verbose:
-                        print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
-                    filtered_dfs.append(df)
-                    continue
-
-                # Create filter mask based on filter type
-                mask = pd.Series(True, index=df.index)
-                for col in columns:
-                    if is_range:
-                        mask &= filtered_df[col].between(range_min, range_max, inclusive='both')
-                    else:
-                        mask &= filtered_df[col].isin(values)
+                # Create filter mask
+                mask = create_filter_mask(df, conditions)
 
                 # Apply filter to copy
-                rows_before = len(filtered_df)
-                filtered_df = filtered_df[mask]
+                rows_before = len(df)
+                filtered_df = df[mask].copy()
                 rows_removed = rows_before - len(filtered_df)
                 total_rows_removed += rows_removed
 
                 if verbose:
                     print(f"DataFrame {i}: Original rows: {original_rows}, Filtered rows: {len(filtered_df)}, "
                           f"Removed: {rows_removed}")
-                    if rows_removed > 0:
-                        if is_range:
-                            print(f"   - Kept rows where {columns} are between {range_min} and {range_max}")
-                        else:
-                            print(f"   - Kept rows where {columns} contain {values}")
 
                 filtered_dfs.append(filtered_df)
 
@@ -2008,9 +2094,239 @@ def filter_rows_by_value(
         if verbose:
             print(f"\n🎯 FILTERING SUMMARY:")
             print(f"   📊 Total rows removed across all DataFrames: {total_rows_removed}")
-            if is_range:
-                print(f"   🔍 Filter criteria: Columns {columns} between {range_min} and {range_max}")
-            else:
-                print(f"   🔍 Filter criteria: Columns {columns} matching values {values}")
 
         return filtered_dfs[0] if single_df else filtered_dfs
+
+    def remove_duplicate_rows(
+            data: Union[pd.DataFrame, List[pd.DataFrame]],
+            duplicate_columns: Union[str, List[str]],
+            keep: str = 'first',
+            date_column: str = None,
+            verbose: bool = True,
+            inplace: bool = False
+    ) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
+        """
+        Remove duplicate rows based on specified columns with flexible removal methods.
+
+        Parameters:
+        -----------
+        :param data: Input DataFrame or list of DataFrames to process
+        :type data: Union[pd.DataFrame, List[pd.DataFrame]]
+
+        :param duplicate_columns: Column name(s) to identify duplicates
+        :type duplicate_columns: Union[str, List[str]]
+
+        :param keep: Which duplicates to keep. Options:
+                    - 'first': Keep first occurrence (default)
+                    - 'last': Keep last occurrence
+                    - 'none': Remove all duplicates (keep none)
+                    - False: Remove all duplicates (keep none)
+        :type keep: str
+
+        :param date_column: Optional date column to determine which duplicate to keep (most recent)
+        :type date_column: str
+
+        :param verbose: Whether to print progress messages (default: True)
+        :type verbose: bool
+
+        :param inplace: If True, modifies the original DataFrame(s) in place and returns None (default: False)
+        :type inplace: bool
+
+        Returns:
+        --------
+        Union[pd.DataFrame, List[pd.DataFrame], None]
+            - If inplace=False: New DataFrame(s) with duplicates removed
+            - If inplace=True: None (original DataFrame(s) are modified in place)
+        """
+
+        def analyze_duplicates(df: pd.DataFrame, dup_cols: List[str]) -> Dict[str, Any]:
+            """
+            Analyze duplicates in the DataFrame.
+
+            Returns:
+            --------
+            Dict with duplicate analysis information
+            """
+            # Count duplicates
+            duplicate_mask = df.duplicated(subset=dup_cols, keep=False)
+            duplicate_groups = df[duplicate_mask].groupby(dup_cols).size()
+
+            return {
+                'total_duplicate_rows': duplicate_mask.sum(),
+                'duplicate_groups_count': len(duplicate_groups),
+                'duplicate_groups': duplicate_groups,
+                'duplicate_indices': df[duplicate_mask].index.tolist()
+            }
+
+        def remove_duplicates_single_df(df: pd.DataFrame, dup_cols: List[str], keep_method: str,
+                                        date_col: str = None) -> pd.DataFrame:
+            """
+            Remove duplicates from a single DataFrame.
+            """
+            # Sort by date column if provided (most recent first)
+            if date_col and date_col in df.columns:
+                df_sorted = df.sort_values(date_col, ascending=False)
+                # Use 'first' to keep most recent due to sort
+                final_keep = 'first'
+            else:
+                df_sorted = df
+                final_keep = keep_method
+
+            # Handle 'none' or False to remove all duplicates
+            if keep_method in ['none', False]:
+                # Keep only rows that are not duplicates at all
+                df_deduplicated = df_sorted.drop_duplicates(subset=dup_cols, keep=False)
+            else:
+                # Keep first/last occurrence
+                df_deduplicated = df_sorted.drop_duplicates(subset=dup_cols, keep=final_keep)
+
+            return df_deduplicated
+
+        # Convert single DataFrame to list for uniform processing
+        single_df = False
+        if isinstance(data, pd.DataFrame):
+            data = [data]
+            single_df = True
+
+        # Convert duplicate_columns to list
+        if isinstance(duplicate_columns, str):
+            dup_cols = [duplicate_columns]
+        else:
+            dup_cols = list(duplicate_columns)
+
+        # Validate keep parameter
+        valid_keep_options = ['first', 'last', 'none', False]
+        if keep not in valid_keep_options:
+            raise ValueError(f"keep must be one of {valid_keep_options}")
+
+        if verbose:
+            print(f"🔍 Duplicate Removal Configuration:")
+            print(f"   📊 Duplicate columns: {dup_cols}")
+            print(f"   🎯 Keep method: {keep}")
+            if date_column:
+                print(f"   📅 Date column: {date_column} (keeping most recent)")
+            print(f"   💾 Inplace mode: {inplace}")
+
+        # Handle inplace operation
+        if inplace:
+            if verbose:
+                print("⚠️  INPLACE MODE: Modifying original DataFrame(s)")
+
+            total_duplicates_removed = 0
+            total_groups_found = 0
+
+            for i, df in enumerate(data):
+                try:
+                    original_rows = len(df)
+
+                    # Check if all specified columns exist
+                    missing_cols = [col for col in dup_cols if col not in df.columns]
+                    if missing_cols:
+                        if verbose:
+                            print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
+                        continue
+
+                    # Analyze duplicates before removal
+                    if verbose:
+                        dup_analysis = analyze_duplicates(df, dup_cols)
+                        total_groups_found += dup_analysis['duplicate_groups_count']
+
+                    # Remove duplicates INPLACE
+                    if keep in ['none', False]:
+                        # For removing all duplicates, we need to identify which rows to keep
+                        non_duplicate_mask = ~df.duplicated(subset=dup_cols, keep=False)
+                        rows_to_keep = df[non_duplicate_mask].index
+                        rows_to_drop = df[~non_duplicate_mask].index
+                    else:
+                        # For keeping first/last, we can use drop_duplicates directly
+                        if date_column and date_column in df.columns:
+                            # Sort by date first
+                            df.sort_values(date_column, ascending=False, inplace=True)
+
+                        # Mark duplicates to remove (all except the ones we want to keep)
+                        if keep == 'first':
+                            rows_to_drop = df[df.duplicated(subset=dup_cols, keep='first')].index
+                        else:  # keep == 'last'
+                            rows_to_drop = df[df.duplicated(subset=dup_cols, keep='last')].index
+                        rows_to_keep = df.index.difference(rows_to_drop)
+
+                    # Remove duplicates in place
+                    rows_before = len(df)
+                    df.drop(rows_to_drop, inplace=True)
+                    rows_removed = rows_before - len(df)
+                    total_duplicates_removed += rows_removed
+
+                    if verbose:
+                        print(f"DataFrame {i}: Modified INPLACE. Original rows: {original_rows}, "
+                              f"Current rows: {len(df)}, Removed: {rows_removed}")
+
+                except Exception as e:
+                    if verbose:
+                        print(f"DataFrame {i}: Error removing duplicates - {e}")
+
+            # Final summary for inplace mode
+            if verbose:
+                print(f"\n🎯 DUPLICATE REMOVAL SUMMARY (INPLACE):")
+                print(f"   📊 Total duplicate rows removed: {total_duplicates_removed}")
+                print(f"   🔍 Total duplicate groups found: {total_groups_found}")
+                if date_column:
+                    print(f"   📅 Using date column '{date_column}' - kept most recent rows")
+
+            return None  # Inplace operations return None
+
+        else:
+            # NEW OBJECT MODE
+            if verbose:
+                print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
+
+            deduplicated_dfs = []
+            total_duplicates_removed = 0
+            total_groups_found = 0
+
+            for i, df in enumerate(data):
+                try:
+                    original_rows = len(df)
+
+                    # Check if all specified columns exist
+                    missing_cols = [col for col in dup_cols if col not in df.columns]
+                    if missing_cols:
+                        if verbose:
+                            print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
+                        deduplicated_dfs.append(df)
+                        continue
+
+                    # Analyze duplicates before removal
+                    dup_analysis = analyze_duplicates(df, dup_cols)
+                    if verbose:
+                        groups_in_df = dup_analysis['duplicate_groups_count']
+                        total_groups_found += groups_in_df
+                        print(f"DataFrame {i}: Found {groups_in_df} duplicate groups "
+                              f"({dup_analysis['total_duplicate_rows']} total duplicate rows)")
+
+                    # Remove duplicates and create new DataFrame
+                    deduplicated_df = remove_duplicates_single_df(df, dup_cols, keep, date_column)
+                    rows_removed = original_rows - len(deduplicated_df)
+                    total_duplicates_removed += rows_removed
+
+                    if verbose:
+                        print(f"DataFrame {i}: Original rows: {original_rows}, "
+                              f"Deduplicated rows: {len(deduplicated_df)}, Removed: {rows_removed}")
+
+                    deduplicated_dfs.append(deduplicated_df)
+
+                except Exception as e:
+                    if verbose:
+                        print(f"DataFrame {i}: Error removing duplicates - {e}")
+                    deduplicated_dfs.append(df)
+
+            # Final summary for new object mode
+            if verbose:
+                print(f"\n🎯 DUPLICATE REMOVAL SUMMARY:")
+                print(f"   📊 Total duplicate rows removed: {total_duplicates_removed}")
+                print(f"   🔍 Total duplicate groups found: {total_groups_found}")
+                if date_column:
+                    print(f"   📅 Using date column '{date_column}' - kept most recent rows")
+                if keep in ['none', False]:
+                    print(f"   🗑️  Removal mode: Removed ALL duplicate rows (keep none)")
+
+            return deduplicated_dfs[0] if single_df else deduplicated_dfs
