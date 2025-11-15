@@ -715,9 +715,10 @@ def remove_columns(df_list: List[pd.DataFrame],
 
 
 def set_columns_to_datetime(data: Union[pd.DataFrame, List[pd.DataFrame]],
-                           datetime_columns: Union[str, List[str]],
-                           drop_columns: Union[str, List[str]] = None,
-                           verbose: bool = True) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+                            datetime_columns: Union[str, List[str]],
+                            drop_columns: Union[str, List[str]] = None,
+                            verbose: bool = True,
+                            inplace: bool = False) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
     """
     Convert specified columns to datetime format in DataFrame(s) and optionally drop columns.
 
@@ -725,75 +726,125 @@ def set_columns_to_datetime(data: Union[pd.DataFrame, List[pd.DataFrame]],
     -----------
     :param data: Input DataFrame or list of DataFrames to process
     :type data: Union[pd.DataFrame, List[pd.DataFrame]]
-    
+
     :param datetime_columns: Column name(s) to convert to datetime format
     :type datetime_columns: Union[str, List[str]]
-    
+
     :param drop_columns: Optional column name(s) to drop after conversion (default: None)
     :type drop_columns: Union[str, List[str]]
 
     :param verbose: Whether to print progress messages (default: True)
     :type verbose: bool
 
+    :param inplace: If True, modifies the original DataFrame(s) in place and returns None (default: False)
+    :type inplace: bool
+
     Returns:
     --------
-    Union[pd.DataFrame, List[pd.DataFrame]]
-        Processed DataFrame(s) with:
-        - Specified columns converted to datetime format (if they exist)
-        - Optional columns dropped if drop_columns was provided
+    Union[pd.DataFrame, List[pd.DataFrame], None]
+        - If inplace=False: New processed DataFrame(s)
+        - If inplace=True: None (original DataFrame(s) are modified in place)
     """
     # Convert parameters to lists if they are single values
     datetime_cols = [datetime_columns] if isinstance(datetime_columns, str) else datetime_columns
-    drop_cols = [drop_columns] if isinstance(drop_columns, str) else drop_columns if drop_columns else []
+    drop_cols = [drop_columns] if isinstance(drop_columns, str) else drop_cols if drop_columns else []
 
-    if isinstance(data, pd.DataFrame):
-        # Initialize counters
-        converted = 0
-        skipped = 0
-        dropped = 0
-        
-        # Process single DataFrame
-        for col in datetime_cols:
-            if col in data.columns:
-                data[col] = pd.to_datetime(data[col], errors='coerce')
-                converted += 1
-                if verbose:
-                    print(f"Converted column '{col}' to datetime")
-            else:
-                skipped += 1
-                if verbose:
-                    print(f"Column '{col}' not found - skipping")
-
-        # Handle column dropping
-        if drop_cols:
-            existing_drop_cols = [col for col in drop_cols if col in data.columns]
-            dropped = len(existing_drop_cols)
-            data.drop(columns=existing_drop_cols, inplace=True)
-            if verbose and existing_drop_cols:
-                print(f"Dropped columns: {existing_drop_cols}")
-
-        # Print summary
+    if inplace:
         if verbose:
-            print(f"\n📊 Processing Summary:")
-            print(f"   ✅ Converted {converted} columns to datetime")
-            print(f"   ⏭️  Skipped {skipped} columns (not found)")
-            print(f"   🗑️  Dropped {dropped} columns")
+            print("⚠️  INPLACE MODE: Modifying original DataFrame(s)")
 
-        return data
+        def process_single_df_inplace(df: pd.DataFrame) -> None:
+            """Process a single DataFrame in place"""
+            converted = 0
+            skipped = 0
 
-    elif isinstance(data, list):
-        # Process list of DataFrames
-        processed_dfs = []
-        for i, df in enumerate(data):
+            for col in datetime_cols:
+                if col in df.columns:
+                    df[col] = pd.to_datetime(df[col], errors='coerce')
+                    converted += 1
+                    if verbose:
+                        print(f"Converted column '{col}' to datetime")
+                else:
+                    skipped += 1
+                    if verbose:
+                        print(f"Column '{col}' not found - skipping")
+
+            # Handle column dropping
+            dropped = 0
+            if drop_cols:
+                existing_drop_cols = [col for col in drop_cols if col in df.columns]
+                dropped = len(existing_drop_cols)
+                df.drop(columns=existing_drop_cols, inplace=True)
+                if verbose and existing_drop_cols:
+                    print(f"Dropped columns: {existing_drop_cols}")
+
+            # Print summary
             if verbose:
-                print(f"\nProcessing DataFrame {i}")
-            processed_df = set_columns_to_datetime(df, datetime_cols, drop_cols, verbose)
-            processed_dfs.append(processed_df)
-        return processed_dfs
+                print(f"📊 Inplace processing: Converted {converted}, Skipped {skipped}, Dropped {dropped}")
+
+        # Process data based on type
+        if isinstance(data, pd.DataFrame):
+            process_single_df_inplace(data)
+        elif isinstance(data, list):
+            for i, df in enumerate(data):
+                if verbose:
+                    print(f"\nProcessing DataFrame {i} in place")
+                process_single_df_inplace(df)
+        else:
+            raise ValueError("data must be a DataFrame or a list of DataFrames")
+
+        return None  # Inplace operations return None
 
     else:
-        raise ValueError("data must be a DataFrame or a list of DataFrames")
+        # NEW OBJECT MODE
+        if verbose:
+            print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
 
+        def process_single_df_copy(df: pd.DataFrame) -> pd.DataFrame:
+            """Process a single DataFrame and return a new copy"""
+            df_copy = df.copy()
+            converted = 0
+            skipped = 0
+
+            for col in datetime_cols:
+                if col in df_copy.columns:
+                    df_copy[col] = pd.to_datetime(df_copy[col], errors='coerce')
+                    converted += 1
+                    if verbose:
+                        print(f"Converted column '{col}' to datetime")
+                else:
+                    skipped += 1
+                    if verbose:
+                        print(f"Column '{col}' not found - skipping")
+
+            # Handle column dropping
+            dropped = 0
+            if drop_cols:
+                existing_drop_cols = [col for col in drop_cols if col in df_copy.columns]
+                dropped = len(existing_drop_cols)
+                df_copy.drop(columns=existing_drop_cols, inplace=True)
+                if verbose and existing_drop_cols:
+                    print(f"Dropped columns: {existing_drop_cols}")
+
+            # Print summary
+            if verbose:
+                print(f"📊 New object processing: Converted {converted}, Skipped {skipped}, Dropped {dropped}")
+
+            return df_copy
+
+        # Process data based on type
+        if isinstance(data, pd.DataFrame):
+            return process_single_df_copy(data)
+        elif isinstance(data, list):
+            processed_dfs = []
+            for i, df in enumerate(data):
+                if verbose:
+                    print(f"\nProcessing DataFrame {i} as new object")
+                processed_df = process_single_df_copy(df)
+                processed_dfs.append(processed_df)
+            return processed_dfs
+        else:
+            raise ValueError("data must be a DataFrame or a list of DataFrames")
 
 def set_columns_to_numeric(data: Union[pd.DataFrame, List[pd.DataFrame]],
                          numeric_columns: Union[str, List[str]],
@@ -1068,15 +1119,17 @@ def pivot_columns(data: Union[pd.DataFrame, List[pd.DataFrame]],
 
     return processed_dfs[0] if single_df else processed_dfs
 
+
 def pivot_dfs_smart(
-    dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
-    pivot_column: str = 'line_name',
-    value_column: str = 'reiksme',
-    id_columns: List[str] = ['ja_kodas'],
-    numeric_agg: str = 'first',
-    string_agg: str = 'first',
-    verbose: bool = True,
-    date_column: str = None
+        dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+        pivot_column: str = 'line_name',
+        value_column: str = 'reiksme',
+        id_columns: List[str] = ['ja_kodas'],
+        numeric_agg: str = 'first',
+        string_agg: str = 'first',
+        verbose: bool = True,
+        date_column: str = None,
+        inplace: bool = False
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
     Apply pivot transformation with configurable aggregation and near-duplicate detection.
@@ -1085,43 +1138,46 @@ def pivot_dfs_smart(
     -----------
     :param dataframes: Input DataFrame or list of DataFrames to process
     :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
-    
+
     :param pivot_column: Column containing values to pivot into new columns (default: 'line_name')
     :type pivot_column: str
-    
+
     :param value_column: Column containing values to spread (default: 'reiksme')
     :type value_column: str
-    
+
     :param id_columns: List of columns used to identify duplicates (default: ['ja_kodas'])
     :type id_columns: List[str]
-    
+
     :param numeric_agg: Aggregation method for numeric columns (default: 'first')
     :type numeric_agg: str
-    
+
     :param string_agg: Aggregation method for string columns (default: 'first')
     :type string_agg: str
 
     :param verbose: Whether to print progress messages (default: True)
     :type verbose: bool
 
+    :param date_column: Column containing date information for keeping most recent duplicates (default: None)
+    :type date_column: str
+
+    :param inplace: If True, modifies the original DataFrame(s) in place and returns None (default: False)
+    :type inplace: bool
+
     Returns:
     --------
-    Union[pd.DataFrame, List[pd.DataFrame]]
-        Processed DataFrame(s) with:
-        - Columns pivoted based on pivot_column values
-        - Configurable aggregation methods
-        - Original columns preserved except pivot and value columns
-        - Near-duplicates removed and reported
+    Union[pd.DataFrame, List[pd.DataFrame], None]
+        - If inplace=False: New processed DataFrame(s) with pivoted structure
+        - If inplace=True: None (original DataFrame(s) are modified in place)
     """
 
     def detect_duplicates(df: pd.DataFrame) -> Dict[str, Dict[str, List[Any]]]:
         """
         Detect duplicate rows where ja_kodas and line_name are identical but reiksme differs.
-        
+
         Duplicates are defined as rows with:
         - Exactly matching ja_kodas AND line_name values
         - Different reiksme values
-        
+
         Returns:
         --------
         Dict[str, Dict[str, List[Any]]]
@@ -1133,13 +1189,13 @@ def pivot_dfs_smart(
               * 'count': Number of duplicates in this group
         """
         duplicates = {}
-        
+
         if 'ja_kodas' not in df.columns or 'line_name' not in df.columns or 'reiksme' not in df.columns:
             return duplicates
-            
+
         # Group by ja_kodas and line_name
         grouped = df.groupby(['ja_kodas', 'line_name'])
-        
+
         for (ja_kodas, line_name), group in grouped:
             if len(group) > 1:
                 # Found rows with same ja_kodas and line_name but potentially different reiksme
@@ -1151,18 +1207,18 @@ def pivot_dfs_smart(
                         'indices': group.index.tolist(),
                         'values': unique_reiksme.tolist()
                     }
-                    
+
         return duplicates
 
     def pivot_dataframe_smart(
-        df: pd.DataFrame,
-        pivot_col: str,
-        value_col: str,
-        id_cols: List[str],
-        num_agg: str,
-        str_agg: str,
-        verbose: bool,
-        date_col: str = None
+            df: pd.DataFrame,
+            pivot_col: str,
+            value_col: str,
+            id_cols: List[str],
+            num_agg: str,
+            str_agg: str,
+            verbose: bool,
+            date_col: str = None
     ) -> pd.DataFrame:
         """
         Pivot with configurable aggregation and exact duplicate handling.
@@ -1172,7 +1228,7 @@ def pivot_dfs_smart(
         Rows are considered duplicates if they have:
         - Exactly matching ja_kodas AND line_name values
         - Different reiksme values
-        
+
         When duplicates are found:
         - First occurrence is kept
         - Subsequent duplicates are removed
@@ -1184,24 +1240,24 @@ def pivot_dfs_smart(
             keep_method = 'first'  # Will keep most recent due to sort
         else:
             keep_method = 'first'  # Default behavior
-            
+
         # Detect and report exact duplicates (ja_kodas + line_name match, reiksme differs)
         duplicates = detect_duplicates(df)
         if duplicates and verbose:
-            total_duplicates = sum(len(dup['indices'])-1 for dup in duplicates.values())
+            total_duplicates = sum(len(dup['indices']) - 1 for dup in duplicates.values())
             print(f"\nExact Duplicate Detection Report:")
             print(f"Found {len(duplicates)} duplicate groups ({total_duplicates} total duplicate rows)")
             print("Duplicate definition: exact match on ja_kodas + line_name with differing reiksme")
             if date_col and date_col in df.columns:
                 print(f"Using date column '{date_col}' - keeping most recent row in each duplicate group")
-            
+
             for key, dup_info in duplicates.items():
                 ja_kodas, line_name = key.split('|')
                 print(f"\nDuplicate Group: ja_kodas={ja_kodas}, line_name={line_name}")
                 print(f" - Keeping {'most recent' if date_col else 'first'} row (index {dup_info['indices'][0]})")
-                print(f" - Removing {len(dup_info['indices'])-1} duplicates (indices: {dup_info['indices'][1:]})")
+                print(f" - Removing {len(dup_info['indices']) - 1} duplicates (indices: {dup_info['indices'][1:]})")
                 print(f" - Differing reiksme values: {dup_info['values']}")
-        
+
         # Remove duplicates (keep first/most recent occurrence of each ja_kodas+line_name pair)
         df = df.drop_duplicates(subset=['ja_kodas', 'line_name'], keep=keep_method)
 
@@ -1235,64 +1291,138 @@ def pivot_dfs_smart(
         pivoted_df.columns.name = None
         return pivoted_df
 
-    # Convert single DataFrame to list for uniform processing
-    single_df = False
-    if isinstance(dataframes, pd.DataFrame):
-        dataframes = [dataframes]
-        single_df = True
+    # Handle inplace operation
+    if inplace:
+        if verbose:
+            print("⚠️  INPLACE MODE: Modifying original DataFrame(s)")
 
-    pivoted_dfs = []
-    total_duplicates_removed = 0
+        # Convert single DataFrame to list for uniform processing
+        single_df = False
+        if isinstance(dataframes, pd.DataFrame):
+            dataframes = [dataframes]
+            single_df = True
 
-    for i, df in enumerate(dataframes):
-        try:
-            # Check required columns
-            required_cols = [pivot_column, value_column] + id_columns
-            missing_cols = [col for col in required_cols if col not in df.columns]
-            if missing_cols:
+        total_duplicates_removed = 0
+
+        for i, df in enumerate(dataframes):
+            try:
+                # Check required columns
+                required_cols = [pivot_column, value_column] + id_columns
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    if verbose:
+                        print(f"DataFrame {i}: Missing columns {missing_cols}")
+                    continue
+
                 if verbose:
-                    print(f"DataFrame {i}: Missing columns {missing_cols}")
+                    print(f"DataFrame {i}: Preserving {len(df.columns) - 2} columns in result")
+
+                # Perform pivot with new configurable parameters
+                pivoted_df = pivot_dataframe_smart(
+                    df=df,
+                    pivot_col=pivot_column,
+                    value_col=value_column,
+                    id_cols=id_columns,
+                    num_agg=numeric_agg,
+                    str_agg=string_agg,
+                    verbose=verbose,
+                    date_col=date_column
+                )
+
+                # Count duplicates removed in this dataframe
+                duplicates_in_df = sum(len(dup['indices']) - 1 for dup in detect_duplicates(df).values())
+                total_duplicates_removed += duplicates_in_df
+
+                # INPLACE MODIFICATION: Replace the original DataFrame content
+                df.drop(df.index, inplace=True)  # Clear all rows
+                df.drop(df.columns, axis=1, inplace=True)  # Clear all columns
+
+                # Copy pivoted data back to original DataFrame
+                for col in pivoted_df.columns:
+                    df[col] = pivoted_df[col]
+
+                if verbose:
+                    print(f"DataFrame {i}: Successfully pivoted INPLACE. New shape: {df.shape}")
+                    if duplicates_in_df > 0:
+                        print(f"Removed {duplicates_in_df} duplicate rows")
+
+            except Exception as e:
+                if verbose:
+                    print(f"DataFrame {i}: Error during pivoting - {e}")
+
+        # Final summary for inplace mode
+        if verbose and total_duplicates_removed > 0:
+            print(f"\n🎯 FINAL DUPLICATE REMOVAL SUMMARY (INPLACE):")
+            print(f"   📊 Total duplicate rows removed across all DataFrames: {total_duplicates_removed}")
+            if date_column:
+                print(f"   📅 Using date column '{date_column}' - kept most recent rows in duplicate groups")
+
+        return None  # Inplace operations return None
+
+    else:
+        # ORIGINAL BEHAVIOR (create new objects)
+        if verbose:
+            print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
+
+        # Convert single DataFrame to list for uniform processing
+        single_df = False
+        if isinstance(dataframes, pd.DataFrame):
+            dataframes = [dataframes]
+            single_df = True
+
+        pivoted_dfs = []
+        total_duplicates_removed = 0
+
+        for i, df in enumerate(dataframes):
+            try:
+                # Check required columns
+                required_cols = [pivot_column, value_column] + id_columns
+                missing_cols = [col for col in required_cols if col not in df.columns]
+                if missing_cols:
+                    if verbose:
+                        print(f"DataFrame {i}: Missing columns {missing_cols}")
+                    pivoted_dfs.append(df)
+                    continue
+
+                if verbose:
+                    print(f"DataFrame {i}: Preserving {len(df.columns) - 2} columns in result")
+
+                # Perform pivot with new configurable parameters
+                pivoted_df = pivot_dataframe_smart(
+                    df=df,
+                    pivot_col=pivot_column,
+                    value_col=value_column,
+                    id_cols=id_columns,
+                    num_agg=numeric_agg,
+                    str_agg=string_agg,
+                    verbose=verbose,
+                    date_col=date_column
+                )
+
+                # Count duplicates removed in this dataframe
+                duplicates_in_df = sum(len(dup['indices']) - 1 for dup in detect_duplicates(df).values())
+                total_duplicates_removed += duplicates_in_df
+
+                pivoted_dfs.append(pivoted_df)
+                if verbose:
+                    print(
+                        f"DataFrame {i}: Successfully pivoted. Original shape: {df.shape}, Pivoted shape: {pivoted_df.shape}")
+                    if duplicates_in_df > 0:
+                        print(f"Removed {duplicates_in_df} duplicate rows")
+
+            except Exception as e:
+                if verbose:
+                    print(f"DataFrame {i}: Error during pivoting - {e}")
                 pivoted_dfs.append(df)
-                continue
 
-            if verbose:
-                print(f"DataFrame {i}: Preserving {len(df.columns) - 2} columns in result")
+        # Final summary for new object mode
+        if verbose and total_duplicates_removed > 0:
+            print(f"\n🎯 FINAL DUPLICATE REMOVAL SUMMARY:")
+            print(f"   📊 Total duplicate rows removed across all DataFrames: {total_duplicates_removed}")
+            if date_column:
+                print(f"   📅 Using date column '{date_column}' - kept most recent rows in duplicate groups")
 
-            # Perform pivot with new configurable parameters
-            pivoted_df = pivot_dataframe_smart(
-                df=df,
-                pivot_col=pivot_column,
-                value_col=value_column,
-                id_cols=id_columns,
-                num_agg=numeric_agg,
-                str_agg=string_agg,
-                verbose=verbose,
-                date_col=date_column
-            )
-
-            # Count duplicates removed in this dataframe
-            duplicates_in_df = sum(len(dup['indices'])-1 for dup in detect_duplicates(df).values())
-            total_duplicates_removed += duplicates_in_df
-            
-            pivoted_dfs.append(pivoted_df)
-            if verbose:
-                print(f"DataFrame {i}: Successfully pivoted. Original shape: {df.shape}, Pivoted shape: {pivoted_df.shape}")
-                if duplicates_in_df > 0:
-                    print(f"Removed {duplicates_in_df} duplicate rows")
-
-        except Exception as e:
-            if verbose:
-                print(f"DataFrame {i}: Error during pivoting - {e}")
-            pivoted_dfs.append(df)
-
-    # Final summary
-    if verbose and total_duplicates_removed > 0:
-        print(f"\n🎯 FINAL DUPLICATE REMOVAL SUMMARY:")
-        print(f"   📊 Total duplicate rows removed across all DataFrames: {total_duplicates_removed}")
-        if date_column:
-            print(f"   📅 Using date column '{date_column}' - kept most recent rows in duplicate groups")
-    
-    return pivoted_dfs[0] if single_df else pivoted_dfs
+        return pivoted_dfs[0] if single_df else pivoted_dfs
 
 def rename_columns_if_exist(data: Union[pd.DataFrame, List[pd.DataFrame]],
                            current_columns: Union[str, List[str]],
@@ -1710,11 +1840,12 @@ def sum_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
 
 
 def filter_rows_by_value(
-    data: Union[pd.DataFrame, List[pd.DataFrame]],
-    column: Union[str, List[str]],
-    value: Union[Any, List[Any], Tuple[Any, Any]],
-    verbose: bool = True
-) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+        data: Union[pd.DataFrame, List[pd.DataFrame]],
+        column: Union[str, List[str]],
+        value: Union[Any, List[Any], Tuple[Any, Any]],
+        verbose: bool = True,
+        inplace: bool = False
+) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
     """
     Filter rows by matching specified value(s) or range in column(s).
 
@@ -1722,24 +1853,27 @@ def filter_rows_by_value(
     -----------
     :param data: Input DataFrame or list of DataFrames to filter
     :type data: Union[pd.DataFrame, List[pd.DataFrame]]
-    
+
     :param column: Column name or list of column names to filter on
     :type column: Union[str, List[str]]
-    
+
     :param value: Value(s) to match in the column(s). Can be:
                  - Single value
                  - List of values (matches any in list)
                  - Tuple of two values (matches values between them, inclusive)
     :type value: Union[Any, List[Any], Tuple[Any, Any]]
-    
+
     :param verbose: Whether to print progress messages (default: True)
     :type verbose: bool
 
+    :param inplace: If True, modifies the original DataFrame(s) in place and returns None (default: False)
+    :type inplace: bool
+
     Returns:
     --------
-    Union[pd.DataFrame, List[pd.DataFrame]]
-        Filtered DataFrame(s) containing only rows where:
-        - Column values match the specified value(s) or range
+    Union[pd.DataFrame, List[pd.DataFrame], None]
+        - If inplace=False: New filtered DataFrame(s)
+        - If inplace=True: None (original DataFrame(s) are modified in place)
     """
     # Convert single DataFrame to list for uniform processing
     single_df = False
@@ -1762,59 +1896,121 @@ def filter_rows_by_value(
     else:
         values = list(value)
 
-    filtered_dfs = []
-    total_rows_removed = 0
+    # Handle inplace operation
+    if inplace:
+        if verbose:
+            print("⚠️  INPLACE MODE: Modifying original DataFrame(s)")
 
-    for i, df in enumerate(data):
-        try:
-            original_rows = len(df)
-            filtered_df = df.copy()
+        total_rows_removed = 0
 
-            # Check if all specified columns exist
-            missing_cols = [col for col in columns if col not in df.columns]
-            if missing_cols:
-                if verbose:
-                    print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
-                filtered_dfs.append(df)
-                continue
+        for i, df in enumerate(data):
+            try:
+                original_rows = len(df)
 
-            # Create filter mask based on filter type
-            mask = pd.Series(True, index=df.index)
-            for col in columns:
-                if is_range:
-                    mask &= filtered_df[col].between(range_min, range_max, inclusive='both')
-                else:
-                    mask &= filtered_df[col].isin(values)
+                # Check if all specified columns exist
+                missing_cols = [col for col in columns if col not in df.columns]
+                if missing_cols:
+                    if verbose:
+                        print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
+                    continue
 
-            # Apply filter
-            rows_before = len(filtered_df)
-            filtered_df = filtered_df[mask]
-            rows_removed = rows_before - len(filtered_df)
-            total_rows_removed += rows_removed
-
-            if verbose:
-                print(f"DataFrame {i}: Original rows: {original_rows}, Filtered rows: {len(filtered_df)}, "
-                      f"Removed: {rows_removed}")
-                if rows_removed > 0:
+                # Create filter mask based on filter type
+                mask = pd.Series(True, index=df.index)
+                for col in columns:
                     if is_range:
-                        print(f"   - Kept rows where {columns} are between {range_min} and {range_max}")
+                        mask &= df[col].between(range_min, range_max, inclusive='both')
                     else:
-                        print(f"   - Kept rows where {columns} contain {values}")
+                        mask &= df[col].isin(values)
 
-            filtered_dfs.append(filtered_df)
+                # Apply filter INPLACE by dropping rows that don't match
+                rows_before = len(df)
+                rows_to_drop = df[~mask].index
+                df.drop(rows_to_drop, inplace=True)
+                rows_removed = rows_before - len(df)
+                total_rows_removed += rows_removed
 
-        except Exception as e:
-            if verbose:
-                print(f"DataFrame {i}: Error filtering rows - {e}")
-            filtered_dfs.append(df)
+                if verbose:
+                    print(f"DataFrame {i}: Modified INPLACE. Original rows: {original_rows}, "
+                          f"Current rows: {len(df)}, Removed: {rows_removed}")
+                    if rows_removed > 0:
+                        if is_range:
+                            print(f"   - Kept rows where {columns} are between {range_min} and {range_max}")
+                        else:
+                            print(f"   - Kept rows where {columns} contain {values}")
 
-    # Final summary
-    if verbose:
-        print(f"\n🎯 FILTERING SUMMARY:")
-        print(f"   📊 Total rows removed across all DataFrames: {total_rows_removed}")
-        if is_range:
-            print(f"   🔍 Filter criteria: Columns {columns} between {range_min} and {range_max}")
-        else:
-            print(f"   🔍 Filter criteria: Columns {columns} matching values {values}")
+            except Exception as e:
+                if verbose:
+                    print(f"DataFrame {i}: Error filtering rows - {e}")
 
-    return filtered_dfs[0] if single_df else filtered_dfs
+        # Final summary for inplace mode
+        if verbose:
+            print(f"\n🎯 FILTERING SUMMARY (INPLACE):")
+            print(f"   📊 Total rows removed across all DataFrames: {total_rows_removed}")
+            if is_range:
+                print(f"   🔍 Filter criteria: Columns {columns} between {range_min} and {range_max}")
+            else:
+                print(f"   🔍 Filter criteria: Columns {columns} matching values {values}")
+
+        return None  # Inplace operations return None
+
+    else:
+        # ORIGINAL BEHAVIOR (create new objects)
+        if verbose:
+            print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
+
+        filtered_dfs = []
+        total_rows_removed = 0
+
+        for i, df in enumerate(data):
+            try:
+                original_rows = len(df)
+                filtered_df = df.copy()
+
+                # Check if all specified columns exist
+                missing_cols = [col for col in columns if col not in df.columns]
+                if missing_cols:
+                    if verbose:
+                        print(f"DataFrame {i}: Missing columns {missing_cols}. Available: {list(df.columns)}")
+                    filtered_dfs.append(df)
+                    continue
+
+                # Create filter mask based on filter type
+                mask = pd.Series(True, index=df.index)
+                for col in columns:
+                    if is_range:
+                        mask &= filtered_df[col].between(range_min, range_max, inclusive='both')
+                    else:
+                        mask &= filtered_df[col].isin(values)
+
+                # Apply filter to copy
+                rows_before = len(filtered_df)
+                filtered_df = filtered_df[mask]
+                rows_removed = rows_before - len(filtered_df)
+                total_rows_removed += rows_removed
+
+                if verbose:
+                    print(f"DataFrame {i}: Original rows: {original_rows}, Filtered rows: {len(filtered_df)}, "
+                          f"Removed: {rows_removed}")
+                    if rows_removed > 0:
+                        if is_range:
+                            print(f"   - Kept rows where {columns} are between {range_min} and {range_max}")
+                        else:
+                            print(f"   - Kept rows where {columns} contain {values}")
+
+                filtered_dfs.append(filtered_df)
+
+            except Exception as e:
+                if verbose:
+                    print(f"DataFrame {i}: Error filtering rows - {e}")
+                filtered_dfs.append(df)
+
+        # Final summary for new object mode
+        if verbose:
+            print(f"\n🎯 FILTERING SUMMARY:")
+            print(f"   📊 Total rows removed across all DataFrames: {total_rows_removed}")
+            if is_range:
+                print(f"   🔍 Filter criteria: Columns {columns} between {range_min} and {range_max}")
+            else:
+                print(f"   🔍 Filter criteria: Columns {columns} matching values {values}")
+
+        return filtered_dfs[0] if single_df else filtered_dfs
