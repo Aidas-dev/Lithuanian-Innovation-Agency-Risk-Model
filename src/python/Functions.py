@@ -2032,6 +2032,45 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
         - If inplace=False: New DataFrame(s) with coalesced columns
     """
 
+
+def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
+                     columns: Union[List[str], Tuple[str, str]],
+                     new_column_name: str = None,
+                     method: str = 'coalesce',
+                     inplace: bool = True) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
+    """
+    Coalesce multiple columns with support for min/max operations.
+
+    Parameters:
+    -----------
+    :param dataframes: Input DataFrame or list of DataFrames to process
+    :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
+
+    :param columns: Column name(s) to coalesce
+    :type columns: Union[List[str], Tuple[str, str]]
+
+    :param new_column_name: Name for the coalesced column (default: None - uses first column name)
+    :type new_column_name: str
+
+    :param method: Coalescing method (default: 'coalesce')
+                   Options:
+                   - 'coalesce': Take first non-null value (standard coalesce)
+                   - 'min': Take the minimum numeric value
+                   - 'max': Take the maximum numeric value
+                   - 'first': Take first non-null value (same as coalesce)
+                   - 'last': Take last non-null value
+    :type method: str
+
+    :param inplace: If True, modifies the original DataFrame(s) in place (default: True)
+    :type inplace: bool
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame], None]
+        - If inplace=True: None (original DataFrame(s) are modified in place)
+        - If inplace=False: New DataFrame(s) with coalesced columns
+    """
+
     def coalesce_single_df(df: pd.DataFrame) -> pd.DataFrame:
         # Convert columns to list if needed
         if isinstance(columns, tuple):
@@ -2060,36 +2099,24 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
             if existing_columns[0] != new_column_name_final:
                 df_result = df_result.rename(columns={existing_columns[0]: new_column_name_final})
         else:
-            # Handle different conflict resolution strategies
-            if conflict_resolution == 'coalesce' and numeric_priority is None:
-                # Original coalesce behavior: take first non-null value
+            # Handle different methods
+            if method in ['coalesce', 'first']:
+                # Take first non-null value
                 df_result[new_column_name_final] = df_result[existing_columns[0]]
                 for col in existing_columns[1:]:
                     mask = df_result[new_column_name_final].isna()
                     df_result.loc[mask, new_column_name_final] = df_result.loc[mask, col]
 
-            elif conflict_resolution == 'first':
-                # Take first non-null value (same as coalesce)
-                df_result[new_column_name_final] = df_result[existing_columns[0]]
-                for col in existing_columns[1:]:
-                    mask = df_result[new_column_name_final].isna()
-                    df_result.loc[mask, new_column_name_final] = df_result.loc[mask, col]
-
-            elif conflict_resolution == 'last':
+            elif method == 'last':
                 # Take last non-null value (reverse order)
                 df_result[new_column_name_final] = df_result[existing_columns[-1]]
                 for col in reversed(existing_columns[:-1]):
                     mask = df_result[new_column_name_final].isna()
                     df_result.loc[mask, new_column_name_final] = df_result.loc[mask, col]
 
-            elif conflict_resolution in ['min', 'max'] or numeric_priority in ['lowest', 'highest']:
-                # Handle numeric priority - take lowest or highest value
+            elif method in ['min', 'max']:
+                # Handle min/max - take lowest or highest numeric value
                 df_result[new_column_name_final] = None
-
-                # Determine the actual priority to use
-                actual_priority = numeric_priority
-                if conflict_resolution in ['min', 'max']:
-                    actual_priority = 'lowest' if conflict_resolution == 'min' else 'highest'
 
                 for idx in df_result.index:
                     # Get all non-null values for this row from the specified columns
@@ -2103,7 +2130,7 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                         # All values are NaN, keep as NaN
                         continue
 
-                    if actual_priority == 'lowest':
+                    if method == 'min':
                         # Take the smallest numeric value
                         try:
                             # Convert to numeric and find min
@@ -2112,7 +2139,6 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                             if valid_numeric:
                                 min_val = min(valid_numeric)
                                 # Find the original value that corresponds to this numeric value
-                                # Prefer the first occurrence that matches the min numeric value
                                 for i, (orig_val, num_val) in enumerate(zip(row_values, numeric_vals)):
                                     if pd.notna(num_val) and num_val == min_val:
                                         df_result.at[idx, new_column_name_final] = orig_val
@@ -2124,7 +2150,7 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                             # If conversion fails, take first non-null value
                             df_result.at[idx, new_column_name_final] = row_values[0]
 
-                    elif actual_priority == 'highest':
+                    elif method == 'max':
                         # Take the largest numeric value
                         try:
                             # Convert to numeric and find max
@@ -2145,11 +2171,7 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                             df_result.at[idx, new_column_name_final] = row_values[0]
 
             else:
-                # Default to coalesce behavior
-                df_result[new_column_name_final] = df_result[existing_columns[0]]
-                for col in existing_columns[1:]:
-                    mask = df_result[new_column_name_final].isna()
-                    df_result.loc[mask, new_column_name_final] = df_result.loc[mask, col]
+                raise ValueError(f"Unknown method: {method}. Use 'coalesce', 'first', 'last', 'min', or 'max'")
 
             # Remove only the columns that were merged (keep all other columns)
             # Don't remove the column if it's the same as the new column name
@@ -2158,7 +2180,7 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
 
         return df_result
 
-    # Handle inplace operation
+    # Handle inplace operation - FIXED VERSION
     if inplace:
         # Convert single DataFrame to list for uniform processing
         if isinstance(dataframes, pd.DataFrame):
@@ -2174,30 +2196,34 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                 original_columns = list(df.columns)
                 result_df = coalesce_single_df(df)
 
-                # Clear original DataFrame and replace with result (keeping all columns)
-                df.drop(df.index, inplace=True)
-                df.drop(df.columns, axis=1, inplace=True)
+                # SAFELY replace the original DataFrame without breaking it
+                # Clear the original DataFrame but preserve its identity
+                df_original_index = df.index
+                df_original_columns = df.columns
 
-                # Copy all columns (including non-merged ones) back to original DataFrame
+                # Clear all data but maintain structure
+                df.drop(columns=df.columns, inplace=True)
+
+                # Copy all columns from result back to original DataFrame
                 for col in result_df.columns:
                     df[col] = result_df[col]
+
+                # Restore original index if it was changed
+                if not df.index.equals(df_original_index):
+                    df.index = df_original_index
 
                 # Get the list of columns that were actually removed
                 removed_columns = [col for col in original_columns if col not in df.columns]
                 if removed_columns:
-                    priority_info = ""
-                    if numeric_priority:
-                        priority_info = f" with {numeric_priority} value priority"
-                    elif conflict_resolution in ['min', 'max']:
-                        priority_info = f" with {conflict_resolution} value"
-
+                    method_info = f" using {method} method" if method != 'coalesce' else ""
                     print(
-                        f"Coalesced columns {removed_columns} -> '{new_column_name or columns[0]}'{priority_info} in DataFrame {i}")
+                        f"Coalesced columns {removed_columns} -> '{new_column_name or columns[0]}'{method_info} in DataFrame {i}")
                 else:
                     print(f"Renamed column to '{new_column_name or columns[0]}' in DataFrame {i}")
 
             except Exception as e:
                 print(f"Error processing DataFrame {i}: {e}")
+                raise
 
         return None  # Inplace operations return None
 
@@ -2209,7 +2235,6 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
             return [coalesce_single_df(df) for df in dataframes]
         else:
             raise ValueError("dataframes must be a DataFrame or list of DataFrames")
-
 def sum_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                 columns: Union[List[str], Tuple[str, str]],
                 new_column_name: str = None,
