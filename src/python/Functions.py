@@ -2465,6 +2465,7 @@ def _process_dataframes(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
         else:
             raise ValueError("dataframes must be a DataFrame or list of DataFrames")
 
+
 def merge_similar_dfs(
         df1_input: Union[pd.DataFrame, List[pd.DataFrame]],
         df2_input: Union[pd.DataFrame, List[pd.DataFrame]],
@@ -2714,39 +2715,61 @@ def merge_similar_dfs(
                 print(f"Pair {pair_idx}: Error during merge - {e}")
             return None
 
-    # Main function logic
-    # Convert single DataFrames to lists for uniform processing
+    # Main function logic - FIXED VERSION
+    # Handle mixed input types properly
     single_df_mode = False
-    if isinstance(df1_input, pd.DataFrame) and isinstance(df2_input, pd.DataFrame):
+
+    # Convert both inputs to lists for uniform processing
+    if isinstance(df1_input, pd.DataFrame):
         df_list1 = [df1_input]
-        df_list2 = [df2_input]
-        single_df_mode = True
-    elif isinstance(df1_input, list) and isinstance(df2_input, list):
+    elif isinstance(df1_input, list):
         df_list1 = df1_input
+    else:
+        raise ValueError("df1_input must be a DataFrame or list of DataFrames")
+
+    if isinstance(df2_input, pd.DataFrame):
+        df_list2 = [df2_input]
+    elif isinstance(df2_input, list):
         df_list2 = df2_input
     else:
-        raise ValueError("Both inputs must be either DataFrames or lists of DataFrames")
+        raise ValueError("df2_input must be a DataFrame or list of DataFrames")
+
+    # If both inputs were single DataFrames, return single DataFrame
+    if isinstance(df1_input, pd.DataFrame) and isinstance(df2_input, pd.DataFrame):
+        single_df_mode = True
 
     # Handle different list lengths
     if len(df_list1) != len(df_list2):
         if verbose:
             print(f"Warning: List lengths differ - list1: {len(df_list1)}, list2: {len(df_list2)}")
-        min_length = min(len(df_list1), len(df_list2))
-        df_list1 = df_list1[:min_length]
-        df_list2 = df_list2[:min_length]
-        if verbose:
-            print(f"Using first {min_length} pairs for merging")
+
+        # If one list has length 1, repeat it to match the other list
+        if len(df_list1) == 1 and len(df_list2) > 1:
+            if verbose:
+                print(f"Repeating single DF1 {len(df_list2)} times to match DF2 list")
+            df_list1 = df_list1 * len(df_list2)
+        elif len(df_list2) == 1 and len(df_list1) > 1:
+            if verbose:
+                print(f"Repeating single DF2 {len(df_list1)} times to match DF1 list")
+            df_list2 = df_list2 * len(df_list1)
+        else:
+            # Otherwise, use the minimum length
+            min_length = min(len(df_list1), len(df_list2))
+            df_list1 = df_list1[:min_length]
+            df_list2 = df_list2[:min_length]
+            if verbose:
+                print(f"Using first {min_length} pairs for merging")
 
     if verbose:
         print(f"🔗 MERGE CONFIGURATION:")
         print(f"   📊 Input pairs: {len(df_list1)}")
         print(f"   🎯 Merge column: '{merge_column}'")
         print(f"   🔄 Merge type: {how}")
-        print(f"   📝 Suffixes: {suffixes} (pandas defaults)")
+        print(f"   📝 Suffixes: {suffixes}")
         print(f"   ✅ Validate: {validate}")
-        print(f"   📈 Indicator: {indicator} (no indicator)")
-        print(f"   🔄 Duplicate handling: {handle_duplicates} (no handling)")
-        print(f"   🚫 NaN handling: {handle_nan} (no handling)")
+        print(f"   📈 Indicator: {indicator}")
+        print(f"   🔄 Duplicate handling: {handle_duplicates}")
+        print(f"   🚫 NaN handling: {handle_nan}")
         print(f"   🔧 Dtype conversion: {dtype_conversion}")
 
     merged_dfs = []
@@ -2774,7 +2797,6 @@ def merge_similar_dfs(
         return merged_dfs[0]
     else:
         return merged_dfs
-
 def filter_rows_by_value(
         data: Union[pd.DataFrame, List[pd.DataFrame]],
         column: Union[str, List[str], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]]],
@@ -3268,88 +3290,112 @@ def remove_duplicate_rows(
             return deduplicated_dfs[0] if single_df else deduplicated_dfs
 
 
-def rearrange_columns_smart(df: pd.DataFrame,
+def rearrange_columns_smart(df_input: Union[pd.DataFrame, List[pd.DataFrame]],
                             patterns: Dict[str, List[str]] = None,
                             priority_cols: List[str] = None,
                             group_order: List[str] = None,
-                            inplace: bool = False) -> pd.DataFrame:
+                            inplace: bool = False) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
     Rearrange columns using pattern matching and priority
 
     Parameters:
-    df: Input DataFrame
+    df_input: Input DataFrame or list of DataFrames
     patterns: Dictionary with pattern keys and column lists
              e.g., {'id': ['id', 'ID', 'user_id'], 'date': ['date', 'timestamp']}
     priority_cols: High priority columns to place first
     group_order: Specify the order of pattern groups
-    inplace: If True, modifies the original DataFrame; if False, returns a new DataFrame (default: False)
+    inplace: If True, modifies the original DataFrame(s); if False, returns new DataFrame(s) (default: False)
 
     Returns:
-    If inplace=True: Returns None (modifies original DataFrame)
-    If inplace=False: Returns new DataFrame with rearranged columns
+    If inplace=True: Returns None (modifies original DataFrame(s))
+    If inplace=False: Returns new DataFrame or list of DataFrames with rearranged columns
     """
 
-    if inplace:
-        # Work directly on the original DataFrame
-        result_df = df
-    else:
-        # Create a copy to avoid modifying the original
-        result_df = df.copy()
+    def rearrange_single_df(df: pd.DataFrame) -> pd.DataFrame:
+        """Rearrange columns for a single DataFrame"""
+        if inplace:
+            result_df = df
+        else:
+            result_df = df.copy()
 
-    current_cols = result_df.columns.tolist()
-    result_cols = []
-    remaining_cols = current_cols.copy()
+        current_cols = result_df.columns.tolist()
+        result_cols = []
+        remaining_cols = current_cols.copy()
 
-    # Add priority columns first
-    if priority_cols:
-        for col in priority_cols:
-            if col in remaining_cols:
-                result_cols.append(col)
-                remaining_cols.remove(col)
+        # Add priority columns first
+        if priority_cols:
+            for col in priority_cols:
+                if col in remaining_cols:
+                    result_cols.append(col)
+                    remaining_cols.remove(col)
 
-    # Pattern-based grouping
-    matched_cols_dict = {}
-    if patterns:
-        # First pass: exact matches
-        for pattern_name, pattern_cols in patterns.items():
-            matched_cols_dict[pattern_name] = []
-            for pattern_col in pattern_cols:
-                if pattern_col in remaining_cols:
-                    matched_cols_dict[pattern_name].append(pattern_col)
-                    remaining_cols.remove(pattern_col)
+        # Pattern-based grouping
+        matched_cols_dict = {}
+        if patterns:
+            # First pass: exact matches
+            for pattern_name, pattern_cols in patterns.items():
+                matched_cols_dict[pattern_name] = []
+                for pattern_col in pattern_cols:
+                    if pattern_col in remaining_cols:
+                        matched_cols_dict[pattern_name].append(pattern_col)
+                        remaining_cols.remove(pattern_col)
 
-        # Second pass: partial matches (contains)
-        for pattern_name, pattern_cols in patterns.items():
-            for pattern_col in pattern_cols:
-                for col in remaining_cols[:]:  # Copy for safe removal
-                    if pattern_col.lower() in col.lower():
-                        matched_cols_dict[pattern_name].append(col)
-                        remaining_cols.remove(col)
-                        break
+            # Second pass: partial matches (contains)
+            for pattern_name, pattern_cols in patterns.items():
+                for pattern_col in pattern_cols:
+                    for col in remaining_cols[:]:  # Copy for safe removal
+                        if pattern_col.lower() in col.lower():
+                            matched_cols_dict[pattern_name].append(col)
+                            remaining_cols.remove(col)
+                            break
 
-    # Determine group order
-    if group_order:
-        # Use specified group order
-        for group in group_order:
-            if group in matched_cols_dict:
-                result_cols.extend(matched_cols_dict[group])
-    else:
-        # Use natural order of patterns dictionary
-        for group_cols in matched_cols_dict.values():
-            result_cols.extend(group_cols)
+        # Determine group order
+        if group_order:
+            # Use specified group order
+            for group in group_order:
+                if group in matched_cols_dict:
+                    result_cols.extend(matched_cols_dict[group])
+        else:
+            # Use natural order of patterns dictionary
+            for group_cols in matched_cols_dict.values():
+                result_cols.extend(group_cols)
 
-    # Add remaining columns
-    result_cols.extend(remaining_cols)
+        # Add remaining columns
+        result_cols.extend(remaining_cols)
 
-    # Reorder the columns
-    result_df = result_df[result_cols]
+        # Reorder the columns
+        result_df = result_df[result_cols]
 
-    if inplace:
-        # For inplace operation, we've already modified the original DataFrame
-        # by reassigning result_df to df and then reordering columns
-        return None
-    else:
         return result_df
+
+    # Main function logic
+    if isinstance(df_input, pd.DataFrame):
+        # Single DataFrame
+        result = rearrange_single_df(df_input)
+        if inplace:
+            return None
+        else:
+            return result
+
+    elif isinstance(df_input, list):
+        # List of DataFrames
+        results = []
+        for i, df in enumerate(df_input):
+            try:
+                rearranged_df = rearrange_single_df(df)
+                results.append(rearranged_df)
+            except Exception as e:
+                print(f"Warning: Could not rearrange DataFrame at index {i}: {e}")
+                # If rearrangement fails, return original DataFrame
+                results.append(df if inplace else df.copy())
+
+        if inplace:
+            return None
+        else:
+            return results
+
+    else:
+        raise ValueError("df_input must be a DataFrame or list of DataFrames")
 
 def create_variable_eval(dataframes: Union[pd.DataFrame, List, List[List]],
                          new_column_name: str,
