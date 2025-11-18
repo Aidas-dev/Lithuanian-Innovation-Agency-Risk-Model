@@ -2099,14 +2099,13 @@ def concatenate_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
     # Handle inplace operation using shared logic
     return _process_dataframes(dataframes, concatenate_single_df, "concatenated", columns, new_column_name, inplace)
 
-
 def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                      columns: Union[List[str], Tuple[str, str]],
                      new_column_name: str = None,
                      method: str = 'coalesce',
                      inplace: bool = True) -> Union[pd.DataFrame, List[pd.DataFrame], None]:
     """
-    Coalesce multiple columns with support for min/max operations and remove only the merged columns.
+    Coalesce multiple columns with support for min/max operations.
 
     Parameters:
     -----------
@@ -2247,9 +2246,61 @@ def coalesce_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
 
         return df_result
 
-    # Handle inplace operation using shared logic
-    return _process_dataframes(dataframes, coalesce_single_df, "coalesced", columns, new_column_name, inplace, method)
+    # Handle inplace operation - FIXED VERSION
+    if inplace:
+        # Convert single DataFrame to list for uniform processing
+        if isinstance(dataframes, pd.DataFrame):
+            dataframes_list = [dataframes]
+            single_df = True
+        else:
+            dataframes_list = dataframes
+            single_df = False
 
+        # Modify DataFrames in place
+        for i, df in enumerate(dataframes_list):
+            try:
+                original_columns = list(df.columns)
+                result_df = coalesce_single_df(df)
+
+                # SAFELY replace the original DataFrame without breaking it
+                # Clear the original DataFrame but preserve its identity
+                df_original_index = df.index
+                df_original_columns = df.columns
+
+                # Clear all data but maintain structure
+                df.drop(columns=df.columns, inplace=True)
+
+                # Copy all columns from result back to original DataFrame
+                for col in result_df.columns:
+                    df[col] = result_df[col]
+
+                # Restore original index if it was changed
+                if not df.index.equals(df_original_index):
+                    df.index = df_original_index
+
+                # Get the list of columns that were actually removed
+                removed_columns = [col for col in original_columns if col not in df.columns]
+                if removed_columns:
+                    method_info = f" using {method} method" if method != 'coalesce' else ""
+                    print(
+                        f"Coalesced columns {removed_columns} -> '{new_column_name or columns[0]}'{method_info} in DataFrame {i}")
+                else:
+                    print(f"Renamed column to '{new_column_name or columns[0]}' in DataFrame {i}")
+
+            except Exception as e:
+                print(f"Error processing DataFrame {i}: {e}")
+                raise
+
+        return None  # Inplace operations return None
+
+    else:
+        # Return new DataFrame(s)
+        if isinstance(dataframes, pd.DataFrame):
+            return coalesce_single_df(dataframes)
+        elif isinstance(dataframes, list):
+            return [coalesce_single_df(df) for df in dataframes]
+        else:
+            raise ValueError("dataframes must be a DataFrame or list of DataFrames")
 
 def sum_columns(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
                 columns: Union[List[str], Tuple[str, str]],
@@ -2406,6 +2457,317 @@ def _process_dataframes(dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
             return [processing_function(df) for df in dataframes]
         else:
             raise ValueError("dataframes must be a DataFrame or list of DataFrames")
+
+def merge_similar_dfs(
+        df1_input: Union[pd.DataFrame, List[pd.DataFrame]],
+        df2_input: Union[pd.DataFrame, List[pd.DataFrame]],
+        merge_column: str,
+        how: str = 'inner',
+        suffixes: Tuple[str, str] = None,
+        validate: str = None,
+        indicator: bool = None,
+        handle_duplicates: str = None,
+        handle_nan: str = None,
+        dtype_conversion: str = 'auto',
+        verbose: bool = True
+) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+    """
+    Merge two DataFrames or lists of DataFrames with comprehensive diagnostics and validation.
+
+    Parameters:
+    -----------
+    :param df1_input: First DataFrame or list of DataFrames to merge
+    :type df1_input: Union[pd.DataFrame, List[pd.DataFrame]]
+
+    :param df2_input: Second DataFrame or list of DataFrames to merge
+    :type df2_input: Union[pd.DataFrame, List[pd.DataFrame]]
+
+    :param merge_column: Column name to merge on
+    :type merge_column: str
+
+    :param how: Type of merge: 'inner', 'left', 'right', 'outer', 'cross' (default: 'inner')
+    :type how: str
+
+    :param suffixes: Suffixes to apply to overlapping columns (default: None - uses pandas defaults)
+    :type suffixes: Tuple[str, str]
+
+    :param validate: Check merge type: 'one_to_one', 'one_to_many', 'many_to_one', 'many_to_many' (default: None)
+    :type validate: str
+
+    :param indicator: Add _merge column showing source of each row (default: None - no indicator)
+    :type indicator: bool
+
+    :param handle_duplicates: How to handle duplicate merge keys: 'first', 'last', 'none', 'error' (default: None - no handling)
+    :type handle_duplicates: str
+
+    :param handle_nan: How to handle NaN values in merge column: 'drop', 'keep', 'error' (default: None - no handling)
+    :type handle_nan: str
+
+    :param dtype_conversion: Convert merge column dtypes: 'auto', 'string', 'numeric', 'none' (default: 'auto')
+    :type dtype_conversion: str
+
+    :param verbose: Whether to print progress messages (default: True)
+    :type verbose: bool
+
+    Returns:
+    --------
+    Union[pd.DataFrame, List[pd.DataFrame]]
+        Merged DataFrame(s) with comprehensive diagnostics
+    """
+
+    def preprocess_dataframe(df: pd.DataFrame, df_name: str, pair_idx: int = None) -> pd.DataFrame:
+        """Preprocess a single DataFrame for merging"""
+        df_clean = df.copy()
+
+        # Check if merge column exists
+        if merge_column not in df_clean.columns:
+            if verbose:
+                name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                print(
+                    f"{df_name}{name_suffix}: Merge column '{merge_column}' not found. Available: {list(df_clean.columns)}")
+            return None
+
+        # Handle NaN values in merge column (only if specified)
+        if handle_nan is not None:
+            nan_count = df_clean[merge_column].isna().sum()
+            if nan_count > 0:
+                if handle_nan == 'drop':
+                    if verbose:
+                        name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                        print(f"{df_name}{name_suffix}: Removing {nan_count} NaN values from merge column")
+                    df_clean = df_clean.dropna(subset=[merge_column])
+                elif handle_nan == 'error':
+                    raise ValueError(f"{df_name}: Found {nan_count} NaN values in merge column '{merge_column}'")
+
+        # Handle duplicates in merge column (only if specified)
+        if handle_duplicates is not None:
+            duplicate_count = df_clean.duplicated(subset=[merge_column]).sum()
+            if duplicate_count > 0:
+                if handle_duplicates == 'first':
+                    if verbose:
+                        name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                        print(
+                            f"{df_name}{name_suffix}: Removing {duplicate_count} duplicate merge keys (keeping first)")
+                    df_clean = df_clean.drop_duplicates(subset=[merge_column], keep='first')
+                elif handle_duplicates == 'last':
+                    if verbose:
+                        name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                        print(f"{df_name}{name_suffix}: Removing {duplicate_count} duplicate merge keys (keeping last)")
+                    df_clean = df_clean.drop_duplicates(subset=[merge_column], keep='last')
+                elif handle_duplicates == 'none':
+                    if verbose:
+                        name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                        print(f"{df_name}{name_suffix}: Removing {duplicate_count} duplicate merge keys (keeping none)")
+                    df_clean = df_clean.drop_duplicates(subset=[merge_column], keep=False)
+                elif handle_duplicates == 'error':
+                    raise ValueError(
+                        f"{df_name}: Found {duplicate_count} duplicate values in merge column '{merge_column}'")
+
+        return df_clean
+
+    def convert_dtypes(df1: pd.DataFrame, df2: pd.DataFrame, pair_idx: int = None) -> Tuple[pd.DataFrame, pd.DataFrame]:
+        """Convert merge column dtypes to be compatible"""
+        if dtype_conversion == 'none':
+            return df1, df2
+
+        dtype1 = df1[merge_column].dtype
+        dtype2 = df2[merge_column].dtype
+
+        if dtype1 == dtype2:
+            return df1, df2
+
+        if dtype_conversion == 'auto':
+            # Convert to string if types are different
+            if verbose:
+                name_suffix = f" in pair {pair_idx}" if pair_idx is not None else ""
+                print(f"Pair {pair_idx}: Converting merge column dtypes to string (was {dtype1} and {dtype2})")
+            df1[merge_column] = df1[merge_column].astype(str)
+            df2[merge_column] = df2[merge_column].astype(str)
+
+        elif dtype_conversion == 'string':
+            df1[merge_column] = df1[merge_column].astype(str)
+            df2[merge_column] = df2[merge_column].astype(str)
+
+        elif dtype_conversion == 'numeric':
+            # Try to convert both to numeric
+            df1[merge_column] = pd.to_numeric(df1[merge_column], errors='coerce')
+            df2[merge_column] = pd.to_numeric(df2[merge_column], errors='coerce')
+
+        return df1, df2
+
+    def calculate_expected_rows(df1: pd.DataFrame, df2: pd.DataFrame, merge_type: str) -> int:
+        """Calculate expected number of rows after merge"""
+        df1_unique = df1[merge_column].nunique()
+        df2_unique = df2[merge_column].nunique()
+        common_keys = set(df1[merge_column]) & set(df2[merge_column])
+        common_count = len(common_keys)
+
+        if merge_type == 'inner':
+            return common_count
+        elif merge_type == 'left':
+            return len(df1)
+        elif merge_type == 'right':
+            return len(df2)
+        elif merge_type == 'outer':
+            return len(df1) + len(df2) - common_count
+        elif merge_type == 'cross':
+            return len(df1) * len(df2)
+        else:
+            return -1  # Unknown merge type
+
+    def perform_single_merge(df1: pd.DataFrame, df2: pd.DataFrame, pair_idx: int = None) -> pd.DataFrame:
+        """Perform merge for a single pair of DataFrames"""
+        # Preprocess both DataFrames
+        df1_clean = preprocess_dataframe(df1, "DF1", pair_idx)
+        df2_clean = preprocess_dataframe(df2, "DF2", pair_idx)
+
+        if df1_clean is None or df2_clean is None:
+            if verbose:
+                print(f"Pair {pair_idx}: Skipping merge due to missing merge column")
+            return None
+
+        # Convert dtypes if needed
+        df1_clean, df2_clean = convert_dtypes(df1_clean, df2_clean, pair_idx)
+
+        # Pre-merge diagnostics
+        if verbose and pair_idx is not None:
+            df1_unique = df1_clean[merge_column].nunique()
+            df2_unique = df2_clean[merge_column].nunique()
+            common_keys = set(df1_clean[merge_column]) & set(df2_clean[merge_column])
+            common_count = len(common_keys)
+            expected_rows = calculate_expected_rows(df1_clean, df2_clean, how)
+
+            print(f"\n--- Pair {pair_idx} Merge Diagnostics ---")
+            print(f"DF1: {len(df1_clean)} rows, {df1_unique} unique {merge_column}")
+            print(f"DF2: {len(df2_clean)} rows, {df2_unique} unique {merge_column}")
+            print(f"Common {merge_column}: {common_count}")
+            print(f"Merge type: {how}")
+            print(f"Expected result rows: {expected_rows}")
+
+            # Report on preprocessing if any was done
+            if handle_nan is not None:
+                df1_nan = df1[merge_column].isna().sum() - df1_clean[merge_column].isna().sum()
+                df2_nan = df2[merge_column].isna().sum() - df2_clean[merge_column].isna().sum()
+                if df1_nan > 0 or df2_nan > 0:
+                    print(f"NaN handling: Removed {df1_nan} from DF1, {df2_nan} from DF2")
+
+            if handle_duplicates is not None:
+                df1_dup = len(df1) - len(df1_clean)
+                df2_dup = len(df2) - len(df2_clean)
+                if df1_dup > 0 or df2_dup > 0:
+                    print(f"Duplicate handling: Removed {df1_dup} from DF1, {df2_dup} from DF2")
+
+        # Perform the merge
+        try:
+            # Prepare merge arguments
+            merge_kwargs = {
+                'left': df1_clean,
+                'right': df2_clean,
+                'on': merge_column,
+                'how': how,
+                'validate': validate
+            }
+
+            # Only add suffixes if specified
+            if suffixes is not None:
+                merge_kwargs['suffixes'] = suffixes
+
+            # Only add indicator if specified
+            if indicator is not None:
+                merge_kwargs['indicator'] = indicator
+
+            merged_df = pd.merge(**merge_kwargs)
+
+            # Post-merge diagnostics
+            if verbose and pair_idx is not None:
+                actual_rows = len(merged_df)
+                print(f"Actual result rows: {actual_rows}")
+
+                if indicator:
+                    merge_stats = merged_df['_merge'].value_counts()
+                    print(f"Merge composition: {merge_stats.to_dict()}")
+
+                # Check for overlapping column names
+                overlapping_cols = set(df1_clean.columns) & set(df2_clean.columns) - {merge_column}
+                if overlapping_cols:
+                    if suffixes is not None:
+                        print(f"Overlapping columns (received suffixes {suffixes}): {list(overlapping_cols)}")
+                    else:
+                        print(f"Overlapping columns (using pandas defaults): {list(overlapping_cols)}")
+
+                if expected_rows != -1 and actual_rows != expected_rows:
+                    print(f"NOTE: Expected {expected_rows} rows but got {actual_rows} rows")
+
+                print(f"Pair {pair_idx}: Successfully merged. Shapes: {df1.shape} + {df2.shape} -> {merged_df.shape}")
+
+            return merged_df
+
+        except Exception as e:
+            if verbose:
+                print(f"Pair {pair_idx}: Error during merge - {e}")
+            return None
+
+    # Main function logic
+    # Convert single DataFrames to lists for uniform processing
+    single_df_mode = False
+    if isinstance(df1_input, pd.DataFrame) and isinstance(df2_input, pd.DataFrame):
+        df_list1 = [df1_input]
+        df_list2 = [df2_input]
+        single_df_mode = True
+    elif isinstance(df1_input, list) and isinstance(df2_input, list):
+        df_list1 = df1_input
+        df_list2 = df2_input
+    else:
+        raise ValueError("Both inputs must be either DataFrames or lists of DataFrames")
+
+    # Handle different list lengths
+    if len(df_list1) != len(df_list2):
+        if verbose:
+            print(f"Warning: List lengths differ - list1: {len(df_list1)}, list2: {len(df_list2)}")
+        min_length = min(len(df_list1), len(df_list2))
+        df_list1 = df_list1[:min_length]
+        df_list2 = df_list2[:min_length]
+        if verbose:
+            print(f"Using first {min_length} pairs for merging")
+
+    if verbose:
+        print(f"🔗 MERGE CONFIGURATION:")
+        print(f"   📊 Input pairs: {len(df_list1)}")
+        print(f"   🎯 Merge column: '{merge_column}'")
+        print(f"   🔄 Merge type: {how}")
+        print(f"   📝 Suffixes: {suffixes} (pandas defaults)")
+        print(f"   ✅ Validate: {validate}")
+        print(f"   📈 Indicator: {indicator} (no indicator)")
+        print(f"   🔄 Duplicate handling: {handle_duplicates} (no handling)")
+        print(f"   🚫 NaN handling: {handle_nan} (no handling)")
+        print(f"   🔧 Dtype conversion: {dtype_conversion}")
+
+    merged_dfs = []
+    successful_merges = 0
+
+    for i, (df1, df2) in enumerate(zip(df_list1, df_list2)):
+        merged_df = perform_single_merge(df1, df2, i)
+        if merged_df is not None:
+            merged_dfs.append(merged_df)
+            successful_merges += 1
+        else:
+            # If merge fails, keep original DataFrames
+            if verbose:
+                print(f"Pair {i}: Merge failed, keeping original DataFrames")
+            merged_dfs.extend([df1, df2])
+
+    # Final summary
+    if verbose:
+        print(f"\n=== MERGE SUMMARY ===")
+        print(f"✅ Successful merges: {successful_merges}/{len(df_list1)}")
+        print(f"📊 Total output DataFrames: {len(merged_dfs)}")
+
+    # Return appropriate format
+    if single_df_mode and merged_dfs:
+        return merged_dfs[0]
+    else:
+        return merged_dfs
+
 def filter_rows_by_value(
         data: Union[pd.DataFrame, List[pd.DataFrame]],
         column: Union[str, List[str], Dict[str, Union[Any, List[Any], Tuple[Any, Any]]]],
