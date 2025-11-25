@@ -3343,6 +3343,98 @@ def remove_duplicate_rows(
             return deduplicated_dfs[0] if single_df else deduplicated_dfs
 
 
+def remove_inf_values(data, replacement=np.nan, inplace=True):
+    """
+    Remove inf and -inf values from pandas DataFrame(s).
+
+    Parameters:
+    -----------
+    data : pd.DataFrame or list of pd.DataFrame
+        Single DataFrame or list of DataFrames to clean
+    replacement : int, float, or np.nan, default=0.0
+        Value to replace inf/-inf with. Use np.nan to replace with NaN
+    inplace : bool, default=False
+        If True, modifies the DataFrame(s) in place
+
+    Returns:
+    --------
+    pd.DataFrame or list of pd.DataFrame
+        Cleaned DataFrame(s) with inf/-inf values replaced
+    """
+
+    def _clean_single_df(df, repl, in_place):
+        """Clean a single DataFrame"""
+        if not in_place:
+            df = df.copy()
+
+        # Replace inf and -inf with specified replacement value
+        df = df.replace([np.inf, -np.inf], repl)
+
+        return df
+
+    # Handle single DataFrame
+    if isinstance(data, pd.DataFrame):
+        return _clean_single_df(data, replacement, inplace)
+
+    # Handle list of DataFrames
+    elif isinstance(data, list) and all(isinstance(df, pd.DataFrame) for df in data):
+        if inplace:
+            for i, df in enumerate(data):
+                data[i] = _clean_single_df(df, replacement, True)
+            return data
+        else:
+            return [_clean_single_df(df, replacement, False) for df in data]
+
+    else:
+        raise TypeError("Input must be a pandas DataFrame or a list of DataFrames")
+
+
+def round_dataframe_values(data, decimals=2, inplace=True):
+    """
+    Round all numeric values in pandas DataFrame(s) to specified decimal places.
+
+    Parameters:
+    -----------
+    data : pd.DataFrame or list of pd.DataFrame
+        Single DataFrame or list of DataFrames to round
+    decimals : int, default=2
+        Number of decimal places to round to
+    inplace : bool, default=False
+        If True, modifies the DataFrame(s) in place
+
+    Returns:
+    --------
+    pd.DataFrame or list of pd.DataFrame
+        Rounded DataFrame(s)
+    """
+
+    def _round_single_df(df, dec, in_place):
+        """Round a single DataFrame"""
+        if not in_place:
+            df = df.copy()
+
+        # Round numeric columns only, preserve non-numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        df[numeric_cols] = df[numeric_cols].round(dec)
+
+        return df
+
+    # Handle single DataFrame
+    if isinstance(data, pd.DataFrame):
+        return _round_single_df(data, decimals, inplace)
+
+    # Handle list of DataFrames
+    elif isinstance(data, list) and all(isinstance(df, pd.DataFrame) for df in data):
+        if inplace:
+            for i, df in enumerate(data):
+                data[i] = _round_single_df(df, decimals, True)
+            return data
+        else:
+            return [_round_single_df(df, decimals, False) for df in data]
+
+    else:
+        raise TypeError("Input must be a pandas DataFrame or a list of DataFrames")
+
 def rearrange_columns_smart(df_input: Union[pd.DataFrame, List[pd.DataFrame]],
                             patterns: Dict[str, List[str]] = None,
                             priority_cols: List[str] = None,
