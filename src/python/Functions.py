@@ -1206,34 +1206,13 @@ def set_columns_to_numeric(data: Union[pd.DataFrame, List[pd.DataFrame]],
 
 
 def remove_rows_by_value(data: Union[pd.DataFrame, List[pd.DataFrame]],
-                       columns: Union[str, List[str]],
-                       values: Union[str, List[str], int, float, List[Union[str, int, float]]],
-                       verbose: bool = True,
-                       inplace: bool = True) -> Union[pd.DataFrame, List[pd.DataFrame]]:
+                                  columns: Union[str, List[str]],
+                                  values: Union[str, List[str], int, float, List[Union[str, int, float]]],
+                                  include_nan: bool = False,
+                                  verbose: bool = True,
+                                  inplace: bool = True) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
-    Remove rows from DataFrame(s) where specified columns contain any of the specified values.
-
-    Parameters:
-    -----------
-    :param data: Input DataFrame or list of DataFrames to process
-    :type data: Union[pd.DataFrame, List[pd.DataFrame]]
-    
-    :param columns: Column name(s) to check for values
-    :type columns: Union[str, List[str]]
-    
-    :param values: Value(s) to match for row removal
-    :type values: Union[str, List[str], int, float, List[Union[str, int, float]]]
-    
-    :param verbose: Whether to print progress messages (default: True)
-    :type verbose: bool
-    
-    :param inplace: If False, returns new DataFrame(s) (default: True)
-    :type inplace: bool
-
-    Returns:
-    --------
-    Union[pd.DataFrame, List[pd.DataFrame]]
-        Processed DataFrame(s) with matching rows removed
+    Enhanced version that properly handles NaN values in numeric columns.
     """
     # Convert single DataFrame to list for uniform processing
     single_df = False
@@ -1255,14 +1234,26 @@ def remove_rows_by_value(data: Union[pd.DataFrame, List[pd.DataFrame]],
         if not inplace:
             df = df.copy()
 
-        # Create mask for rows to keep (not containing any of the values in specified columns)
+        # Create mask for rows to keep
         mask = pd.Series(True, index=df.index)
+
         for col in columns_list:
             if col in df.columns:
-                col_mask = ~df[col].isin(values_list)
+                # For numeric columns with NaN, we need special handling
+                if include_nan and pd.api.types.is_numeric_dtype(df[col]):
+                    # Create mask that excludes both the specified values AND NaN
+                    value_mask = ~df[col].isin(values_list)
+                    nan_mask = ~df[col].isna()
+                    col_mask = value_mask & nan_mask
+                else:
+                    # Original logic for non-numeric or without NaN handling
+                    col_mask = ~df[col].isin(values_list)
+
                 mask = mask & col_mask
+
                 if verbose:
-                    print(f"DataFrame {i}: Checking column '{col}' for {len(values_list)} values")
+                    print(f"DataFrame {i}: Checking column '{col}' for {len(values_list)} values" +
+                          (" (including NaN)" if include_nan else ""))
             elif verbose:
                 print(f"DataFrame {i}: Column '{col}' not found - skipping")
 
@@ -1273,18 +1264,16 @@ def remove_rows_by_value(data: Union[pd.DataFrame, List[pd.DataFrame]],
         total_removed += rows_removed
 
         if verbose:
-            print(f"DataFrame {i}: Removed {rows_removed} rows based on value matches")
-        
+            print(f"DataFrame {i}: Removed {rows_removed} rows")
+
         processed_dfs.append(df)
 
-    # Final summary
     if verbose:
         print(f"\n🎯 FINAL SUMMARY:")
         print(f"   📦 Processed {len(data)} DataFrames")
         print(f"   🗑️  Total rows removed: {total_removed}")
 
     return processed_dfs[0] if single_df else processed_dfs
-
 
 def pivot_columns(data: Union[pd.DataFrame, List[pd.DataFrame]],
                  pivot_column: str,
@@ -1390,11 +1379,11 @@ def pivot_columns(data: Union[pd.DataFrame, List[pd.DataFrame]],
     return processed_dfs[0] if single_df else processed_dfs
 
 
-def pivot_dfs_smart(
+def pivot_dfs_smart_flexible(
         dataframes: Union[pd.DataFrame, List[pd.DataFrame]],
-        pivot_column: str = 'line_name',
-        value_column: str = 'reiksme',
-        id_columns: List[str] = ['ja_kodas'],
+        pivot_column: str,
+        value_columns: Union[str, List[str]],
+        id_columns: Union[str, List[str]] = 'ja_kodas',
         numeric_agg: str = 'first',
         string_agg: str = 'first',
         verbose: bool = True,
@@ -1402,21 +1391,21 @@ def pivot_dfs_smart(
         inplace: bool = False
 ) -> Union[pd.DataFrame, List[pd.DataFrame]]:
     """
-    Apply pivot transformation with configurable aggregation and near-duplicate detection.
+    Apply pivot transformation with flexible single or multiple value columns and ID columns.
 
     Parameters:
     -----------
     :param dataframes: Input DataFrame or list of DataFrames to process
     :type dataframes: Union[pd.DataFrame, List[pd.DataFrame]]
 
-    :param pivot_column: Column containing values to pivot into new columns (default: 'line_name')
+    :param pivot_column: Column containing values to pivot into new columns
     :type pivot_column: str
 
-    :param value_column: Column containing values to spread (default: 'reiksme')
-    :type value_column: str
+    :param value_columns: Single column name or list of columns containing values to spread
+    :type value_columns: Union[str, List[str]]
 
-    :param id_columns: List of columns used to identify duplicates (default: ['ja_kodas'])
-    :type id_columns: List[str]
+    :param id_columns: Single column name or list of columns used to identify unique rows (default: 'ja_kodas')
+    :type id_columns: Union[str, List[str]]
 
     :param numeric_agg: Aggregation method for numeric columns (default: 'first')
     :type numeric_agg: str
@@ -1440,144 +1429,211 @@ def pivot_dfs_smart(
         - If inplace=True: None (original DataFrame(s) are modified in place)
     """
 
-    def detect_duplicates(df: pd.DataFrame) -> Dict[str, Dict[str, List[Any]]]:
+    def detect_duplicates_flexible(df: pd.DataFrame, pivot_col: str, id_cols: List[str], value_cols: List[str]) -> Dict[
+        str, Dict[str, List[Any]]]:
         """
-        Detect duplicate rows where ja_kodas and line_name are identical but reiksme differs.
-
-        Duplicates are defined as rows with:
-        - Exactly matching ja_kodas AND line_name values
-        - Different reiksme values
-
-        Returns:
-        --------
-        Dict[str, Dict[str, List[Any]]]
-            Dictionary where:
-            - Keys are duplicate group IDs in format "ja_kodas|line_name"
-            - Values contain:
-              * 'indices': List of row indices in the duplicate group
-              * 'values': List of differing reiksme values
-              * 'count': Number of duplicates in this group
+        Detect duplicate rows where id_columns and pivot_column are identical but value columns differ.
         """
         duplicates = {}
 
-        if 'ja_kodas' not in df.columns or 'line_name' not in df.columns or 'reiksme' not in df.columns:
+        required_cols = id_cols + [pivot_col] + value_cols
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
             return duplicates
 
-        # Group by ja_kodas and line_name
-        grouped = df.groupby(['ja_kodas', 'line_name'])
+        # Group by id_columns and pivot_column
+        group_cols = id_cols + [pivot_col]
+        grouped = df.groupby(group_cols)
 
-        for (ja_kodas, line_name), group in grouped:
+        for group_key, group in grouped:
             if len(group) > 1:
-                # Found rows with same ja_kodas and line_name but potentially different reiksme
-                unique_reiksme = group['reiksme'].unique()
-                if len(unique_reiksme) > 1:
-                    # Actual duplicates with differing reiksme values
-                    key = f"{ja_kodas}|{line_name}"
+                # Found rows with same id_columns and pivot_column
+                key_parts = [str(x) for x in group_key]
+                key = "|".join(key_parts)
+
+                differing_values = {}
+                for value_col in value_cols:
+                    unique_values = group[value_col].unique()
+                    if len(unique_values) > 1:
+                        differing_values[value_col] = unique_values.tolist()
+
+                if differing_values:
                     duplicates[key] = {
                         'indices': group.index.tolist(),
-                        'values': unique_reiksme.tolist()
+                        'differing_values': differing_values,
+                        'group_values': dict(zip(group_cols, group_key))
                     }
 
         return duplicates
 
-    def pivot_dataframe_smart(
+    def pivot_dataframe_flexible(
             df: pd.DataFrame,
             pivot_col: str,
-            value_col: str,
-            id_cols: List[str],
+            value_cols: Union[str, List[str]],
+            id_cols: Union[str, List[str]],
             num_agg: str,
             str_agg: str,
             verbose: bool,
             date_col: str = None
     ) -> pd.DataFrame:
         """
-        Pivot with configurable aggregation and exact duplicate handling.
-
-        Duplicate Handling:
-        ------------------
-        Rows are considered duplicates if they have:
-        - Exactly matching ja_kodas AND line_name values
-        - Different reiksme values
-
-        When duplicates are found:
-        - First occurrence is kept
-        - Subsequent duplicates are removed
-        - Detailed report is shown when verbose=True
+        Pivot with flexible single or multiple value columns and ID columns while keeping all other columns.
         """
+        # Convert to lists for uniform processing
+        if isinstance(value_cols, str):
+            value_cols_list = [value_cols]
+        else:
+            value_cols_list = value_cols
+
+        if isinstance(id_cols, str):
+            id_cols_list = [id_cols]
+        else:
+            id_cols_list = id_cols
+
         # Sort by date column if provided (most recent first)
         if date_col and date_col in df.columns:
             df = df.sort_values(date_col, ascending=False)
-            keep_method = 'first'  # Will keep most recent due to sort
+            keep_method = 'first'
         else:
-            keep_method = 'first'  # Default behavior
+            keep_method = 'first'
 
-        # Detect and report exact duplicates (ja_kodas + line_name match, reiksme differs)
-        duplicates = detect_duplicates(df)
+        # Identify all columns to keep (excluding pivot and value columns)
+        all_columns_to_keep = [col for col in df.columns if col not in [pivot_col] + value_cols_list]
+
+        # Detect and report duplicates
+        duplicates = detect_duplicates_flexible(df, pivot_col, id_cols_list, value_cols_list)
         if duplicates and verbose:
             total_duplicates = sum(len(dup['indices']) - 1 for dup in duplicates.values())
             print(f"\nExact Duplicate Detection Report:")
             print(f"Found {len(duplicates)} duplicate groups ({total_duplicates} total duplicate rows)")
-            print("Duplicate definition: exact match on ja_kodas + line_name with differing reiksme")
-            if date_col and date_col in df.columns:
-                print(f"Using date column '{date_col}' - keeping most recent row in each duplicate group")
+            print(f"Duplicate definition: exact match on {id_cols_list + [pivot_col]} with differing {value_cols_list}")
 
             for key, dup_info in duplicates.items():
-                ja_kodas, line_name = key.split('|')
-                print(f"\nDuplicate Group: ja_kodas={ja_kodas}, line_name={line_name}")
+                print(f"\nDuplicate Group: {key}")
                 print(f" - Keeping {'most recent' if date_col else 'first'} row (index {dup_info['indices'][0]})")
-                print(f" - Removing {len(dup_info['indices']) - 1} duplicates (indices: {dup_info['indices'][1:]})")
-                print(f" - Differing reiksme values: {dup_info['values']}")
+                print(f" - Removing {len(dup_info['indices']) - 1} duplicates")
+                for value_col, values in dup_info['differing_values'].items():
+                    print(f" - Differing {value_col} values: {values}")
 
-        # Remove duplicates (keep first/most recent occurrence of each ja_kodas+line_name pair)
-        df = df.drop_duplicates(subset=['ja_kodas', 'line_name'], keep=keep_method)
+        # Remove duplicates (keep first/most recent occurrence)
+        duplicate_subset = id_cols_list + [pivot_col]
+        df_unique = df.drop_duplicates(subset=duplicate_subset, keep=keep_method)
 
-        # Identify column types
-        numeric_cols = []
-        string_cols = []
-        for col in df.columns:
-            if col in [pivot_col, value_col]:
-                continue
-            if pd.api.types.is_numeric_dtype(df[col]):
-                numeric_cols.append(col)
+        # For single value column, use simpler pivot
+        if len(value_cols_list) == 1:
+            value_col = value_cols_list[0]
+            if value_col not in df_unique.columns:
+                if verbose:
+                    print(f"Warning: Column '{value_col}' not found in DataFrame")
+                return df_unique
+
+            # Create pivot table
+            pivoted = df_unique.pivot_table(
+                index=id_cols_list,
+                columns=pivot_col,
+                values=value_col,
+                aggfunc='first'
+            )
+
+            # Reset index to get ID columns back as columns
+            pivoted = pivoted.reset_index()
+            pivoted.columns.name = None
+
+            # Merge back with the other columns that were not pivoted
+            # Get the first occurrence of other columns for each ID combination
+            other_columns_df = df_unique[all_columns_to_keep].drop_duplicates(subset=id_cols_list, keep='first')
+
+            # Merge the pivoted data with the other columns
+            final_df = pd.merge(pivoted, other_columns_df, on=id_cols_list, how='left')
+
+            if verbose:
+                original_cols = len(df.columns)
+                new_cols = len(final_df.columns)
+                print(
+                    f"Pivot created {new_cols - len(all_columns_to_keep)} new columns from value column '{value_col}'")
+                print(f"Kept {len(all_columns_to_keep)} additional columns unchanged")
+
+            return final_df
+
+        else:
+            # Multiple value columns - create separate pivot tables and merge
+            merged_pivot = None
+
+            for value_col in value_cols_list:
+                if value_col not in df_unique.columns:
+                    if verbose:
+                        print(f"Warning: Column '{value_col}' not found in DataFrame")
+                    continue
+
+                # Create pivot table for this value column
+                pivot_table = df_unique.pivot_table(
+                    index=id_cols_list,
+                    columns=pivot_col,
+                    values=value_col,
+                    aggfunc='first'
+                )
+
+                # Rename columns to include value column name
+                pivot_table.columns = [f'{value_col}_{col}' for col in pivot_table.columns]
+
+                # Merge with previous results
+                if merged_pivot is None:
+                    merged_pivot = pivot_table
+                else:
+                    merged_pivot = merged_pivot.merge(
+                        pivot_table,
+                        left_index=True,
+                        right_index=True,
+                        how='outer'
+                    )
+
+            if merged_pivot is not None:
+                # Reset index to get ID columns back as columns
+                pivoted_df = merged_pivot.reset_index()
+
+                # Merge back with the other columns that were not pivoted
+                other_columns_df = df_unique[all_columns_to_keep].drop_duplicates(subset=id_cols_list, keep='first')
+                final_df = pd.merge(pivoted_df, other_columns_df, on=id_cols_list, how='left')
+
+                if verbose:
+                    original_cols = len(df.columns)
+                    new_cols = len(final_df.columns)
+                    value_cols_used = [col for col in value_cols_list if col in df_unique.columns]
+                    print(
+                        f"Pivot created {new_cols - len(all_columns_to_keep)} new columns from {len(value_cols_used)} value columns")
+                    print(f"Kept {len(all_columns_to_keep)} additional columns unchanged")
+
+                return final_df
             else:
-                string_cols.append(col)
-
-        # Create aggregation dictionary
-        agg_dict = {value_col: 'first'}
-        agg_dict.update({col: num_agg for col in numeric_cols})
-        agg_dict.update({col: str_agg for col in string_cols})
-
-        # Identify index columns
-        index_cols = [col for col in df.columns if col not in [pivot_col, value_col]]
-
-        # Perform pivot
-        pivoted_df = df.pivot_table(
-            index=index_cols,
-            columns=pivot_col,
-            values=value_col,
-            aggfunc='first'
-        ).reset_index()
-
-        pivoted_df.columns.name = None
-        return pivoted_df
+                if verbose:
+                    print("Warning: No pivotable columns found, returning original DataFrame")
+                return df_unique
 
     # Handle inplace operation
     if inplace:
         if verbose:
             print("⚠️  INPLACE MODE: Modifying original DataFrame(s)")
 
-        # Convert single DataFrame to list for uniform processing
         single_df = False
         if isinstance(dataframes, pd.DataFrame):
             dataframes = [dataframes]
             single_df = True
 
-        total_duplicates_removed = 0
-
         for i, df in enumerate(dataframes):
             try:
+                # Convert to lists for validation
+                if isinstance(value_columns, str):
+                    value_cols_list = [value_columns]
+                else:
+                    value_cols_list = value_columns
+
+                if isinstance(id_columns, str):
+                    id_cols_list = [id_columns]
+                else:
+                    id_cols_list = id_columns
+
                 # Check required columns
-                required_cols = [pivot_column, value_column] + id_columns
+                required_cols = [pivot_column] + value_cols_list + id_cols_list
                 missing_cols = [col for col in required_cols if col not in df.columns]
                 if missing_cols:
                     if verbose:
@@ -1585,13 +1641,25 @@ def pivot_dfs_smart(
                     continue
 
                 if verbose:
-                    print(f"DataFrame {i}: Preserving {len(df.columns) - 2} columns in result")
+                    # Display value columns info
+                    if len(value_cols_list) == 1:
+                        value_info = f"single value column '{value_cols_list[0]}'"
+                    else:
+                        value_info = f"{len(value_cols_list)} value columns"
 
-                # Perform pivot with new configurable parameters
-                pivoted_df = pivot_dataframe_smart(
+                    # Display ID columns info
+                    if len(id_cols_list) == 1:
+                        id_info = f"single ID column '{id_cols_list[0]}'"
+                    else:
+                        id_info = f"{len(id_cols_list)} ID columns"
+
+                    print(f"DataFrame {i}: Pivoting {value_info} using {id_info}")
+
+                # Perform pivot
+                pivoted_df = pivot_dataframe_flexible(
                     df=df,
                     pivot_col=pivot_column,
-                    value_col=value_column,
+                    value_cols=value_columns,
                     id_cols=id_columns,
                     num_agg=numeric_agg,
                     str_agg=string_agg,
@@ -1599,54 +1667,49 @@ def pivot_dfs_smart(
                     date_col=date_column
                 )
 
-                # Count duplicates removed in this dataframe
-                duplicates_in_df = sum(len(dup['indices']) - 1 for dup in detect_duplicates(df).values())
-                total_duplicates_removed += duplicates_in_df
+                # INPLACE MODIFICATION
+                df.drop(df.index, inplace=True)
+                df.drop(df.columns, axis=1, inplace=True)
 
-                # INPLACE MODIFICATION: Replace the original DataFrame content
-                df.drop(df.index, inplace=True)  # Clear all rows
-                df.drop(df.columns, axis=1, inplace=True)  # Clear all columns
-
-                # Copy pivoted data back to original DataFrame
                 for col in pivoted_df.columns:
                     df[col] = pivoted_df[col]
 
                 if verbose:
                     print(f"DataFrame {i}: Successfully pivoted INPLACE. New shape: {df.shape}")
-                    if duplicates_in_df > 0:
-                        print(f"Removed {duplicates_in_df} duplicate rows")
 
             except Exception as e:
                 if verbose:
                     print(f"DataFrame {i}: Error during pivoting - {e}")
 
-        # Final summary for inplace mode
-        if verbose and total_duplicates_removed > 0:
-            print(f"\n🎯 FINAL DUPLICATE REMOVAL SUMMARY (INPLACE):")
-            print(f"   📊 Total duplicate rows removed across all DataFrames: {total_duplicates_removed}")
-            if date_column:
-                print(f"   📅 Using date column '{date_column}' - kept most recent rows in duplicate groups")
-
-        return None  # Inplace operations return None
+        return None
 
     else:
-        # ORIGINAL BEHAVIOR (create new objects)
+        # NEW OBJECT MODE
         if verbose:
             print("🆕 NEW OBJECT MODE: Creating new DataFrame(s)")
 
-        # Convert single DataFrame to list for uniform processing
         single_df = False
         if isinstance(dataframes, pd.DataFrame):
             dataframes = [dataframes]
             single_df = True
 
         pivoted_dfs = []
-        total_duplicates_removed = 0
 
         for i, df in enumerate(dataframes):
             try:
+                # Convert to lists for validation
+                if isinstance(value_columns, str):
+                    value_cols_list = [value_columns]
+                else:
+                    value_cols_list = value_columns
+
+                if isinstance(id_columns, str):
+                    id_cols_list = [id_columns]
+                else:
+                    id_cols_list = id_columns
+
                 # Check required columns
-                required_cols = [pivot_column, value_column] + id_columns
+                required_cols = [pivot_column] + value_cols_list + id_cols_list
                 missing_cols = [col for col in required_cols if col not in df.columns]
                 if missing_cols:
                     if verbose:
@@ -1655,13 +1718,25 @@ def pivot_dfs_smart(
                     continue
 
                 if verbose:
-                    print(f"DataFrame {i}: Preserving {len(df.columns) - 2} columns in result")
+                    # Display value columns info
+                    if len(value_cols_list) == 1:
+                        value_info = f"single value column '{value_cols_list[0]}'"
+                    else:
+                        value_info = f"{len(value_cols_list)} value columns"
 
-                # Perform pivot with new configurable parameters
-                pivoted_df = pivot_dataframe_smart(
+                    # Display ID columns info
+                    if len(id_cols_list) == 1:
+                        id_info = f"single ID column '{id_cols_list[0]}'"
+                    else:
+                        id_info = f"{len(id_cols_list)} ID columns"
+
+                    print(f"DataFrame {i}: Pivoting {value_info} using {id_info}")
+
+                # Perform pivot
+                pivoted_df = pivot_dataframe_flexible(
                     df=df,
                     pivot_col=pivot_column,
-                    value_col=value_column,
+                    value_cols=value_columns,
                     id_cols=id_columns,
                     num_agg=numeric_agg,
                     str_agg=string_agg,
@@ -1669,28 +1744,15 @@ def pivot_dfs_smart(
                     date_col=date_column
                 )
 
-                # Count duplicates removed in this dataframe
-                duplicates_in_df = sum(len(dup['indices']) - 1 for dup in detect_duplicates(df).values())
-                total_duplicates_removed += duplicates_in_df
-
                 pivoted_dfs.append(pivoted_df)
                 if verbose:
                     print(
                         f"DataFrame {i}: Successfully pivoted. Original shape: {df.shape}, Pivoted shape: {pivoted_df.shape}")
-                    if duplicates_in_df > 0:
-                        print(f"Removed {duplicates_in_df} duplicate rows")
 
             except Exception as e:
                 if verbose:
                     print(f"DataFrame {i}: Error during pivoting - {e}")
                 pivoted_dfs.append(df)
-
-        # Final summary for new object mode
-        if verbose and total_duplicates_removed > 0:
-            print(f"\n🎯 FINAL DUPLICATE REMOVAL SUMMARY:")
-            print(f"   📊 Total duplicate rows removed across all DataFrames: {total_duplicates_removed}")
-            if date_column:
-                print(f"   📅 Using date column '{date_column}' - kept most recent rows in duplicate groups")
 
         return pivoted_dfs[0] if single_df else pivoted_dfs
 
@@ -3387,6 +3449,147 @@ def remove_inf_values(data, replacement=np.nan, inplace=True):
 
     else:
         raise TypeError("Input must be a pandas DataFrame or a list of DataFrames")
+
+
+def set_dataframe_values(data, target_value, new_value, columns=None, inplace=True, verbose=True):
+    """
+    Replace specific values with new values in pandas DataFrame(s) across all data types.
+
+    Works with strings, floats, integers, booleans, and other data types.
+
+    Parameters:
+    -----------
+    data : pd.DataFrame or list of pd.DataFrame
+        Single DataFrame or list of DataFrames to process
+    target_value : any
+        The value to be replaced (can be any data type)
+    new_value : any
+        The new value to set (can be any data type)
+    columns : list, str, or None, default=None
+        Specific columns to process. If None, processes all columns.
+        Can be a single column name string or list of column names.
+    inplace : bool, default=False
+        If True, modifies the DataFrame(s) in place
+    verbose : bool, default=True
+        Whether to print summary information about replacements
+
+    Returns:
+    --------
+    pd.DataFrame or list of pd.DataFrame or None
+        - If inplace=False: New DataFrame(s) with values replaced
+        - If inplace=True: None (original DataFrame(s) are modified in place)
+
+    Examples:
+    ---------
+    >>> # Replace all 0 with NaN
+    >>> set_dataframe_values(df, 0, np.nan)
+
+    >>> # Replace empty strings with "Missing"
+    >>> set_dataframe_values(df, "", "Missing")
+
+    >>> # Replace True with False in specific columns
+    >>> set_dataframe_values(df, True, False, columns=['is_active'])
+
+    >>> # Replace "N/A" with None in string columns
+    >>> set_dataframe_values(df, "N/A", None)
+    """
+    import pandas as pd
+    import numpy as np
+
+    def process_single_dataframe(df, target_val, new_val, cols, verbose_flag):
+        """Process a single DataFrame"""
+        if not inplace:
+            df = df.copy()
+
+        # Determine which columns to process
+        if cols is None:
+            # Process all columns
+            columns_to_process = df.columns.tolist()
+        elif isinstance(cols, str):
+            # Single column specified as string
+            columns_to_process = [cols] if cols in df.columns else []
+        else:
+            # List of columns specified
+            columns_to_process = [col for col in cols if col in df.columns]
+
+        if not columns_to_process:
+            if verbose_flag:
+                print("⚠️  No valid columns found to process")
+            return df
+
+        # Count replacements before processing
+        replacement_counts = {}
+        total_replacements = 0
+
+        for col in columns_to_process:
+            # Count occurrences of target value
+            if pd.api.types.is_string_dtype(df[col]):
+                # For string columns, handle NaN/None carefully
+                mask = df[col].astype(str) == str(target_val)
+            else:
+                # For other types, direct comparison
+                mask = df[col] == target_val
+
+            count = mask.sum()
+            replacement_counts[col] = count
+            total_replacements += count
+
+            # Perform replacement
+            if count > 0:
+                df.loc[mask, col] = new_val
+
+        # Print summary if verbose
+        if verbose_flag and total_replacements > 0:
+            print(f"🔧 Value Replacement Summary:")
+            print(f"   📊 Total replacements: {total_replacements}")
+            print(f"   🎯 Target value: {target_val} → New value: {new_value}")
+            print(f"   📝 Columns affected: {len([c for c in columns_to_process if replacement_counts.get(c, 0) > 0])}")
+
+            # Show top columns with replacements
+            top_cols = {k: v for k, v in replacement_counts.items() if v > 0}
+            if top_cols:
+                print(f"   📈 Replacements by column:")
+                for col, count in sorted(top_cols.items(), key=lambda x: x[1], reverse=True)[:5]:
+                    print(f"      - {col}: {count} replacements")
+
+        elif verbose_flag and total_replacements == 0:
+            print(f"ℹ️  No occurrences of target value '{target_val}' found in specified columns")
+
+        return df
+
+    # Handle the case where data is a single DataFrame
+    single_dataframe = False
+    if isinstance(data, pd.DataFrame):
+        data = [data]
+        single_dataframe = True
+
+    # Process all DataFrames
+    processed_data = []
+
+    for i, df in enumerate(data):
+        if verbose:
+            print(f"\n📄 Processing DataFrame {i + 1}/{len(data)}")
+            print(f"   Shape: {df.shape}")
+
+        result_df = process_single_dataframe(
+            df=df,
+            target_val=target_value,
+            new_val=new_value,
+            cols=columns,
+            verbose_flag=verbose
+        )
+
+        processed_data.append(result_df)
+
+    # Return appropriate result based on inplace and single_dataframe
+    if inplace:
+        if verbose:
+            print(f"\n✅ INPLACE OPERATION COMPLETED: Original DataFrame(s) modified")
+        return None
+    else:
+        if verbose:
+            print(f"\n✅ NEW OBJECTS CREATED: Returning new DataFrame(s)")
+        return processed_data[0] if single_dataframe else processed_data
 
 
 def round_dataframe_values(data, decimals=2, inplace=True):
